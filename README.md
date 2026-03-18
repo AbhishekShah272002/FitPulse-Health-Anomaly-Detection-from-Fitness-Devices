@@ -1,4 +1,5 @@
 FitPulse: Health Anomaly Detection from Fitness Devices
+
 📋 Project Overview
 FitPulse is an end-to-end data science solution designed to monitor health metrics from wearable fitness devices and detect physiological anomalies. By leveraging machine learning, the system identifies irregular patterns in heart rate, activity levels, and other biometric data, providing early warning signals for potential health issues.
 
