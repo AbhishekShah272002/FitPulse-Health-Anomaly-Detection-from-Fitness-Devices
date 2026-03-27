@@ -6,11 +6,15 @@ Health Anomaly Detection from Fitness Devices
 FitPulse AI Platform is an end-to-end data science application designed to analyze fitness device data and detect health anomalies using machine learning. The platform integrates data analytics, preprocessing, feature engineering, and predictive modeling into an interactive dashboard built with Streamlit.
 
 🎯 Key Features
+
 📊 Data Analytics Module
+
 CSV data ingestion
 Data quality checks (null values, column profiling)
 Exploratory Data Analysis (EDA)
+
 🧬 Machine Learning Pipeline
+
 Feature extraction using TSFresh
 Clustering: K-Means, DBSCAN
 Dimensionality Reduction: PCA, t-SNE
