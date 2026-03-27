@@ -21,11 +21,15 @@ Dimensionality Reduction: PCA, t-SNE
 Time Series Forecasting using Prophet
 
 ⚠️ Anomaly Detection
+
 Detect unusual health patterns from fitness data
+
 🖥️ Interactive Dashboard
 Real-time insights and visualization
 User-friendly interface
+
 🏗️ Project Structure
+
 FitPulse/
 │
 ├── Fitpulse-App/           # Streamlit application
