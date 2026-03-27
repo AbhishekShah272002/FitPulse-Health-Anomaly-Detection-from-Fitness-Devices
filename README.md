@@ -46,14 +46,18 @@ ML Techniques: Clustering, Forecasting, Dimensionality Reduction
 Visualization: Matplotlib, Plotly
 Framework: Streamlit
 Tools: Git, VS Code
+
 🚀 How to Run the Project
+
 1️⃣ Clone the Repository
+
 git clone https://github.com/your-username/FitPulse-Health-Anomaly-Detection-from-Fitness-Devices.git
 cd FitPulse-Health-Anomaly-Detection-from-Fitness-Devices
 2️⃣ Install Dependencies
 pip install -r requirements.txt
 3️⃣ Run the Application
 streamlit run main_app.py
+
 📊 Use Case
 
 This project helps in:
@@ -61,11 +65,13 @@ This project helps in:
 Monitoring fitness data 📈
 Detecting abnormal health patterns ⚠️
 Providing predictive insights for better health decisions 🧠
+
 📸 Screenshots
 
-(Add your UI images here from the Screenshots folder)
+https://github.com/AbhishekShah272002/FitPulse-Health-Anomaly-Detection-from-Fitness-Devices/tree/main/Screenshots
 
 📈 Future Enhancements
+
 Integration with real-time wearable devices
 Deep learning-based anomaly detection
 Deployment on cloud platforms
