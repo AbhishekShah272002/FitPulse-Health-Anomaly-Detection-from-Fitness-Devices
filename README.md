@@ -48,7 +48,9 @@ FitPulse/
 ├── requirements.txt        # Dependencies
 ├── README.md               # Project documentation
 └── LICENSE
+
 ⚙️ Tech Stack
+
 Programming: Python
 Libraries: Pandas, NumPy, Scikit-learn
 ML Techniques: Clustering, Forecasting, Dimensionality Reduction
