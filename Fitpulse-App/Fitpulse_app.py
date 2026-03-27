@@ -1,9 +1,10 @@
 """
-FitPulse Unified Platform  ·  v4.0
+FitPulse Unified Platform  ·  v5.0
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Single Streamlit app combining:
-  • Analytics Platform  — thistle #D8BFD8 palette, full EDA pipeline
-  • ML Pipeline         — TSFresh · Prophet · KMeans · DBSCAN · PCA · t-SNE
+  • Analytics Platform   — thistle #D8BFD8 palette, full EDA pipeline
+  • ML Pipeline          — TSFresh · Prophet · KMeans · DBSCAN · PCA · t-SNE
+  • Anomaly Detection    — Threshold · Residual · DBSCAN Outliers · Accuracy Simulation
 
 Sidebar dropdown switches modes.  ALL chrome (header bar, sidebar,
 buttons, progress bars) re-themes consistently on every rerun.
@@ -14,6 +15,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -47,53 +49,68 @@ _defaults = {
     "ml_run_done":  False,
     "ml_dfs":       {},
     "feat_df":      None,
+    # — anomaly —
+    "anom_dark_mode":        False,
+    "anom_files_loaded":     False,
+    "anom_anomaly_done":     False,
+    "anom_simulation_done":  False,
+    "anom_daily":    None,
+    "anom_hourly_s": None,
+    "anom_hourly_i": None,
+    "anom_sleep":    None,
+    "anom_hr":       None,
+    "anom_hr_minute":None,
+    "anom_master":   None,
+    "anom_hr_result":    None,
+    "anom_steps_result": None,
+    "anom_sleep_result": None,
+    "anom_sim_results":  None,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SHARED COLOUR CONSTANTS  (same base palette for both modes)
+# SHARED COLOUR CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
-BG     = "#D8BFD8"   # thistle — app background
-CARD   = "#EDE0ED"   # lighter thistle — cards & panels
-FIG_BG = "#F5ECF5"   # near-white purple — chart backgrounds
-BORD   = "#C4A0C4"   # medium thistle — borders
-ACC    = "#6B2D8B"   # deep purple — primary accent
-ACC2   = "#9B59B6"   # medium purple — secondary accent
-TXT    = "#2D1B3D"   # very dark purple — body text
-SOFT   = "#7B5C8A"   # muted purple — labels & subtitles
-SB_BG  = "#1A0A22"   # near-black purple — sidebar
-SB_BDR = "#3D1F52"   # dark purple — sidebar border
-SB_FUP = "#251035"   # sidebar file-uploader bg
+BG     = "#D8BFD8"
+CARD   = "#EDE0ED"
+FIG_BG = "#F5ECF5"
+BORD   = "#C4A0C4"
+ACC    = "#6B2D8B"
+ACC2   = "#9B59B6"
+TXT    = "#2D1B3D"
+SOFT   = "#7B5C8A"
+SB_BG  = "#1A0A22"
+SB_BDR = "#3D1F52"
+SB_FUP = "#251035"
 
-# chart palette
 PAL = [ACC, ACC2, "#2ECC71","#1ABC9C","#E74C3C","#F39C12","#3498DB","#E91E63"]
-
-# ml cluster colours
 CLUSTER_COLORS = {0:"#4d8fd4",1:"#e0609a",2:"#3baa66",3:"#f4a020",4:"#9b6cd4",-1:"#e04040"}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DYNAMIC THEME CSS — re-injected every rerun so header/sidebar always match
-# ─────────────────────────────────────────────────────────────────────────────
-_ml = st.session_state.mode == "ML Pipeline"
+# anomaly-specific accent
+ACCENT_RED = "#C0392B"
+ACCENT3    = "#1E8449"
 
-# mode tokens
-_HDR_BG    = f"linear-gradient(90deg,{SB_BG},{SB_BDR})"   # same dark for both
+# ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC THEME CSS
+# ─────────────────────────────────────────────────────────────────────────────
+_mode = st.session_state.mode
+_ml   = _mode == "ML Pipeline"
+_anom = _mode == "Anomaly Detection"
+
+_HDR_BG    = f"linear-gradient(90deg,{SB_BG},{SB_BDR})"
 _DECO      = f"linear-gradient(90deg,{ACC},{ACC2})"
 _SB_SEL_BG = "#2A1040"
 _SB_SEL_BD = ACC
 _POP_BG    = "#2A1040"
 _POP_HOV   = SB_BDR
-
-# The ML sidebar uses a lighter gradient (from original ML file)
-_SB_ACTUAL_BG = "linear-gradient(160deg,#2A1040,#1A0A22)" if _ml else SB_BG
+_SB_ACTUAL_BG = "linear-gradient(160deg,#2A1040,#1A0A22)" if (_ml or _anom) else SB_BG
 
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
 
-/* ── KEYFRAMES ── */
 @keyframes fadeUp   {{from{{opacity:0;transform:translateY(14px)}}to{{opacity:1;transform:translateY(0)}}}}
 @keyframes slideIn  {{from{{opacity:0;transform:translateX(-14px)}}to{{opacity:1;transform:translateX(0)}}}}
 @keyframes rotateBdr{{from{{transform:rotate(0deg)}}to{{transform:rotate(360deg)}}}}
@@ -103,8 +120,8 @@ st.markdown(f"""
 @keyframes popIn    {{from{{opacity:0;transform:scale(0.9)}}to{{opacity:1;transform:scale(1)}}}}
 @keyframes countUp  {{from{{opacity:0;transform:translateY(6px)}}to{{opacity:1;transform:translateY(0)}}}}
 @keyframes scanLine {{0%{{left:-4px;opacity:0}}5%{{opacity:1}}95%{{opacity:1}}100%{{left:100%;opacity:0}}}}
+@keyframes pulse    {{0%,100%{{opacity:1}}50%{{opacity:0.5}}}}
 
-/* ── BASE — thistle for both modes ── */
 html,body,[class*="css"]{{font-family:'DM Sans',sans-serif;}}
 .stApp,
 [data-testid="stAppViewContainer"],
@@ -116,7 +133,6 @@ html,body,[class*="css"]{{font-family:'DM Sans',sans-serif;}}
 }}
 .block-container{{padding:1.4rem 2rem 3rem!important;max-width:1380px!important;}}
 
-/* ── TOP HEADER BAR ── */
 header[data-testid="stHeader"]{{
   background:{_HDR_BG}!important;
   border-bottom:2px solid {SB_BDR}!important;
@@ -127,7 +143,6 @@ header[data-testid="stHeader"]{{
   height:3px!important;
 }}
 
-/* ── HEADER BUTTONS (deploy, ⋮ menu) ── */
 [data-testid="stAppDeployButton"] button{{
   background:{ACC}!important;color:#fff!important;
   border:2px solid {ACC2}!important;border-radius:8px!important;
@@ -154,7 +169,6 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
   fill:#fff!important;stroke:#fff!important;
 }}
 
-/* ── SIDEBAR ── */
 [data-testid="stSidebar"]{{
   background:{_SB_ACTUAL_BG}!important;
   border-right:1.5px solid {SB_BDR}!important;
@@ -163,7 +177,6 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
 [data-testid="collapsedControl"]{{display:none!important;}}
 [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]{{display:flex!important;}}
 
-/* ── SIDEBAR MODE SELECTBOX ── */
 [data-testid="stSidebar"] [data-baseweb="select"]>div{{
   background:{_SB_SEL_BG}!important;border:1.5px solid {_SB_SEL_BD}!important;
   border-radius:9px!important;color:#E8D4F0!important;
@@ -181,7 +194,6 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
   background:{_POP_HOV}!important;color:#fff!important;
 }}
 
-/* ── SIDEBAR FILE UPLOADER ── */
 [data-testid="stSidebar"] [data-testid="stFileUploader"] section{{
   border:2px dashed rgba(155,89,182,0.55)!important;
   background:{SB_FUP}!important;border-radius:10px!important;transition:border-color 0.25s;
@@ -190,7 +202,6 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
   border-color:{ACC2}!important;
 }}
 
-/* ── SIDEBAR PROGRESS (ML) ── */
 [data-testid="stSidebar"] .stProgress>div>div>div>div{{
   background:linear-gradient(90deg,{ACC2},{ACC})!important;border-radius:999px;
 }}
@@ -198,10 +209,8 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
   background:rgba(155,89,182,0.3)!important;border-radius:999px;
 }}
 
-/* ── SIDEBAR SLIDERS ── */
 [data-testid="stSidebar"] [data-testid="stSliderTrackFill"]{{background:{ACC}!important;}}
 
-/* ── MAIN AREA BUTTONS ── */
 .stButton>button{{
   background:{ACC}!important;color:#fff!important;border:none!important;
   border-radius:8px!important;padding:0.48rem 1.35rem!important;
@@ -213,7 +222,6 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
 .stButton>button:active{{transform:scale(0.97)!important;}}
 .stButton>button:disabled{{background:{BORD}!important;color:{SOFT}!important;box-shadow:none!important;}}
 
-/* ── FILE UPLOADER (main area) ── */
 [data-testid="stFileUploader"] section{{
   border:2px dashed {BORD}!important;border-radius:10px!important;background:{FIG_BG}!important;
 }}
@@ -231,43 +239,38 @@ button[data-testid="baseButton-header"]:hover svg,button[kind="header"]:hover sv
   background:{ACC2}!important;
 }}
 
-/* ── PROGRESS BAR (main) ── */
 .stProgress>div>div>div>div{{background:linear-gradient(90deg,{ACC2},{ACC})!important;border-radius:999px;}}
 .stProgress>div>div{{background:rgba(196,160,196,0.4)!important;border-radius:999px;}}
 
-/* ── METRICS ── */
 [data-testid="stMetric"]{{
   background:{CARD};border:1.5px solid {BORD};border-radius:14px;padding:10px 14px;
 }}
 [data-testid="stMetricLabel"]{{font-family:'Syne',sans-serif;font-weight:700;color:{SOFT}!important;}}
 [data-testid="stMetricValue"]{{color:{ACC}!important;font-family:'Syne',sans-serif;}}
 
-/* ── TABS ── */
 [data-baseweb="tab-list"]{{background:transparent!important;}}
 [data-baseweb="tab"]{{font-family:'Syne',sans-serif!important;font-weight:600!important;color:{SOFT}!important;}}
 [aria-selected="true"]{{color:{ACC}!important;border-bottom:2px solid {ACC}!important;}}
 
-/* ── SELECT / INPUT ── */
 [data-baseweb="select"]>div,[data-baseweb="input"]>div{{
   background:{CARD}!important;border-color:{BORD}!important;
 }}
 
-/* ── DATAFRAMES ── */
 [data-testid="stDataFrame"]{{border-radius:10px!important;border:1px solid {BORD}!important;
   overflow:hidden;box-shadow:0 1px 5px rgba(107,45,139,0.08);}}
 
-/* ── EXPANDER ── */
 details summary{{
   background:{CARD}!important;border:1px solid {BORD}!important;
   border-radius:8px!important;color:{TXT}!important;
 }}
+
+[data-baseweb="input"] > div {{ background:{CARD} !important; border-color:{BORD} !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ── COMPONENT CSS (static — layout & colour-agnostic structures) ────────────
+# ── COMPONENT CSS ─────────────────────────────────────────────────────────────
 st.markdown(f"""
 <style>
-/* ANALYTICS BANNER */
 .banner{{
   background:linear-gradient(135deg,#1A0A22 0%,#2D1040 55%,#1A0A22 100%);
   border-radius:14px;padding:1.5rem 2rem;margin-bottom:1.5rem;
@@ -283,8 +286,9 @@ st.markdown(f"""
 .banner-sub{{font-size:0.78rem;color:#B89ABE;margin-top:4px;}}
 .banner-chip{{background:rgba(155,89,182,0.2);border:1px solid rgba(155,89,182,0.5);border-radius:20px;
   padding:6px 16px;font-size:0.72rem;font-weight:700;color:{ACC2};letter-spacing:0.6px;z-index:1;}}
+.banner-chip-red{{background:rgba(192,57,43,0.2);border:1px solid rgba(192,57,43,0.5);border-radius:20px;
+  padding:6px 16px;font-size:0.72rem;font-weight:700;color:#E74C3C;letter-spacing:0.6px;z-index:1;}}
 
-/* STEP HEADER */
 .step-hdr{{display:flex;align-items:center;gap:0.75rem;
   background:{CARD};border:1px solid {BORD};border-left:5px solid {ACC};border-radius:10px;
   padding:0.78rem 1.3rem;margin:1.4rem 0 1rem;font-family:'Syne',sans-serif;
@@ -293,7 +297,6 @@ st.markdown(f"""
 .step-num{{background:{ACC};color:#fff;font-size:0.68rem;font-weight:700;
   width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}}
 
-/* STAT CARDS */
 .scard{{background:{CARD};border:1px solid {BORD};border-radius:12px;
   padding:1.2rem 1.3rem;position:relative;overflow:hidden;
   box-shadow:0 1px 5px rgba(107,45,139,0.1);animation:fadeUp 0.4s ease both;
@@ -306,7 +309,6 @@ st.markdown(f"""
 .scard-val.orange{{color:{ACC};}} .scard-val.red{{color:#C0392B;}} .scard-val.green{{color:#1E8449;}}
 .scard-lbl{{font-size:0.68rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;}}
 
-/* LOADER */
 .loader{{background:{CARD};border:1px solid {BORD};border-radius:12px;
   padding:1.25rem 1.5rem;margin:0.6rem 0;position:relative;overflow:hidden;
   box-shadow:0 1px 8px rgba(107,45,139,0.12);}}
@@ -331,7 +333,6 @@ st.markdown(f"""
   background:{FIG_BG};border:1px solid {BORD};border-radius:5px;
   padding:4px 10px;margin-top:0.3rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
 
-/* LOG LINES */
 .logline{{background:{FIG_BG};border:1px solid {BORD};border-left:3px solid {ACC2};
   border-radius:6px;padding:0.48rem 0.9rem;margin-bottom:0.32rem;
   font-size:0.79rem;color:{TXT};position:relative;overflow:hidden;animation:slideIn 0.3s ease both;}}
@@ -343,14 +344,12 @@ st.markdown(f"""
 .logline.info{{border-left-color:{ACC2};background:{FIG_BG};color:{ACC};}}
 .logline.err {{border-left-color:#C0392B;background:#FDEDEC;color:#922B21;}}
 
-/* INFO / OK BOXES */
 .info-box{{background:{FIG_BG};border:1px solid {BORD};border-radius:9px;
   padding:0.8rem 1.1rem;font-size:0.8rem;color:{ACC};margin:0.5rem 0;animation:popIn 0.3s ease;}}
 .ok-box{{background:{FIG_BG};border:1px solid {BORD};border-radius:9px;
   padding:0.8rem 1.1rem;font-size:0.81rem;color:{ACC};font-weight:600;
   text-align:center;animation:popIn 0.35s ease;}}
 
-/* EDA CARDS */
 .eda-card{{background:{CARD};border:1px solid {BORD};border-radius:12px;
   padding:1.4rem 1.6rem;margin-bottom:1.2rem;
   box-shadow:0 1px 5px rgba(107,45,139,0.08);animation:fadeUp 0.35s ease;}}
@@ -360,7 +359,6 @@ st.markdown(f"""
   padding:3px 10px;font-size:0.71rem;color:{ACC};margin:3px;font-weight:500;transition:all 0.2s;}}
 .nbadge:hover{{background:{ACC};color:#fff;border-color:{ACC};transform:scale(1.03);}}
 
-/* ML HERO */
 .fp-hero{{background:linear-gradient(120deg,#e0cce0ee,#cdb5cdee);
   border:1.5px solid {BORD};border-radius:16px;padding:22px 28px 18px;margin-bottom:20px;}}
 .fp-title{{font-family:'Syne',sans-serif;font-size:2.1rem;font-weight:800;color:{ACC};margin:0 0 4px;}}
@@ -371,7 +369,63 @@ st.markdown(f"""
 .fp-info{{background:#e8d5e8dd;border-left:4px solid {ACC2};border-radius:8px;
   padding:10px 16px;margin-bottom:12px;font-size:.9rem;color:{SOFT};}}
 
-/* ML DATA LOADING CARDS */
+.fp-hero-anom{{background:linear-gradient(135deg,#2D1040 0%,#1A0A22 50%,#2D1040 100%);
+  border:1px solid rgba(192,57,43,0.4);border-left:5px solid #C0392B;
+  border-radius:14px;padding:2rem 2.4rem;margin-bottom:1.5rem;
+  position:relative;overflow:hidden;animation:fadeUp 0.4s ease;
+  box-shadow:0 4px 22px rgba(192,57,43,0.2);}}
+.fp-hero-anom::before{{content:'';position:absolute;top:-60px;right:-60px;width:280px;height:280px;
+  background:radial-gradient(circle,rgba(192,57,43,0.08) 0%,transparent 70%);border-radius:50%;}}
+.anom-title{{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;color:#F0E0F8;margin:0 0 0.4rem;letter-spacing:-0.02em;}}
+.anom-sub{{font-size:0.9rem;color:#B89ABE;font-weight:300;margin:0;}}
+.anom-badge{{display:inline-block;background:rgba(192,57,43,0.2);border:1px solid rgba(192,57,43,0.5);
+  border-radius:100px;padding:0.3rem 1rem;font-size:0.74rem;
+  font-family:'DM Mono',monospace;color:#E74C3C;margin-bottom:0.9rem;}}
+
+.sec-header{{display:flex;align-items:center;gap:0.8rem;
+  margin:1.8rem 0 1rem;padding-bottom:0.6rem;border-bottom:2px solid {BORD};}}
+.sec-icon{{font-size:1.3rem;width:2.1rem;height:2.1rem;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(107,45,139,0.1);border-radius:8px;border:1px solid {BORD};}}
+.sec-title{{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:700;color:{TXT};margin:0;}}
+.sec-badge{{margin-left:auto;background:rgba(107,45,139,0.1);border:1px solid {BORD};
+  border-radius:100px;padding:0.2rem 0.75rem;font-size:0.7rem;
+  font-family:'DM Mono',monospace;color:{ACC};}}
+
+.anom-card{{background:{CARD};border:1px solid {BORD};border-radius:12px;padding:1.3rem 1.5rem;margin-bottom:1rem;
+  box-shadow:0 1px 6px rgba(107,45,139,0.08);}}
+.anom-card-title{{font-family:'Syne',sans-serif;font-size:0.85rem;font-weight:700;
+  color:{SOFT};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.6rem;}}
+
+.metric-grid{{display:flex;gap:0.75rem;flex-wrap:wrap;margin:0.75rem 0;}}
+.metric-card{{flex:1;min-width:115px;background:{FIG_BG};border:1px solid {BORD};
+  border-radius:12px;padding:0.9rem 1.1rem;text-align:center;}}
+.metric-val{{font-family:'Syne',sans-serif;font-size:1.55rem;font-weight:800;color:{ACC};line-height:1;margin-bottom:0.22rem;}}
+.metric-val-red{{color:{ACCENT_RED};}}
+.metric-label{{font-size:0.7rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.06em;}}
+
+.step-pill{{display:inline-flex;align-items:center;gap:0.5rem;
+  background:rgba(107,45,139,0.1);border:1px solid {BORD};border-radius:100px;
+  padding:0.28rem 0.9rem;font-size:0.73rem;font-family:'DM Mono',monospace;
+  color:{ACC};margin-bottom:0.75rem;}}
+.anom-tag{{display:inline-flex;align-items:center;gap:0.4rem;
+  background:rgba(192,57,43,0.1);border:1px solid rgba(192,57,43,0.4);border-radius:100px;
+  padding:0.28rem 0.9rem;font-size:0.71rem;font-family:'DM Mono',monospace;
+  color:{ACCENT_RED};margin-bottom:0.75rem;}}
+
+.alert-warn    {{background:rgba(211,84,0,0.07);border-left:3px solid #D4AC0D;
+  border-radius:0 9px 9px 0;padding:0.75rem 1rem;margin:0.5rem 0;
+  font-size:0.84rem;color:#7D6608;}}
+.alert-success {{background:rgba(30,132,73,0.07);border-left:3px solid {ACCENT3};
+  border-radius:0 9px 9px 0;padding:0.75rem 1rem;margin:0.5rem 0;
+  font-size:0.84rem;color:{ACCENT3};}}
+.alert-info    {{background:rgba(107,45,139,0.07);border-left:3px solid {ACC};
+  border-radius:0 9px 9px 0;padding:0.75rem 1rem;margin:0.5rem 0;
+  font-size:0.84rem;color:{ACC};}}
+.alert-danger  {{background:rgba(192,57,43,0.07);border-left:3px solid {ACCENT_RED};
+  border-radius:0 9px 9px 0;padding:0.75rem 1rem;margin:0.5rem 0;
+  font-size:0.84rem;color:{ACCENT_RED};}}
+
 .ds-grid{{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}}
 .ds-card{{background:#e2cfe2cc;border:1.5px solid {BORD};border-radius:10px;
   padding:10px 16px;min-width:140px;flex:1 1 140px;text-align:center;}}
@@ -382,7 +436,6 @@ st.markdown(f"""
 .steps-badge{{float:right;background:{ACC2};color:#fff;border-radius:999px;
   padding:2px 12px;font-size:.75rem;font-family:'Syne',sans-serif;font-weight:700;}}
 
-/* SIDEBAR STRUCTURAL */
 .sb-logo{{font-family:'Syne',sans-serif;font-size:1.15rem;font-weight:800;color:#F0E0F8;}}
 .sb-tag{{font-size:0.68rem;color:#9B7BAE;margin-top:2px;}}
 .sb-mode-label{{font-size:0.62rem;color:#9B7BAE;text-transform:uppercase;
@@ -397,7 +450,6 @@ st.markdown(f"""
 .sb-div{{height:1px;background:{SB_BDR};margin:0.9rem 0;}}
 .ml-stage{{font-size:0.83rem;padding:3px 0;color:#C8A8D8!important;}}
 
-/* GENERAL */
 .hr{{height:1px;background:linear-gradient(90deg,transparent,{BORD},transparent);margin:1.5rem 0;}}
 .footer{{text-align:center;font-size:0.7rem;color:{SOFT};
   padding:0.9rem 0 0.4rem;border-top:1px solid {BORD};margin-top:1.8rem;}}
@@ -452,6 +504,20 @@ def apply_theme(fig, h=340):
         tickfont=dict(color=SOFT,size=11),title_font=dict(color=SOFT))
     return fig
 
+def apply_anom_theme(fig, title=""):
+    fig.update_layout(
+        paper_bgcolor=CARD, plot_bgcolor=FIG_BG,
+        font_color=TXT, font_family="DM Sans",
+        xaxis=dict(gridcolor=BORD,showgrid=True,zeroline=False,linecolor=BORD,tickfont_color=SOFT),
+        yaxis=dict(gridcolor=BORD,showgrid=True,zeroline=False,linecolor=BORD,tickfont_color=SOFT),
+        legend=dict(bgcolor=CARD,bordercolor=BORD,borderwidth=1,font_color=TXT),
+        margin=dict(l=50,r=30,t=60,b=50),
+        hoverlabel=dict(bgcolor=CARD,bordercolor=BORD,font_color=TXT),
+    )
+    if title:
+        fig.update_layout(title=dict(text=title,font_color=TXT,font_size=14,font_family="Syne"))
+    return fig
+
 def scard(col, val, lbl, color="", icon=""):
     cls = {"orange":"orange","red":"red","green":"green"}.get(color,"")
     with col:
@@ -465,8 +531,31 @@ def step_hdr(num, icon, title):
         f'<div class="step-hdr"><div class="step-num">{num}</div>'
         f'<span>{icon}&nbsp; {title}</span></div>', unsafe_allow_html=True)
 
+def anom_sec(icon, title, badge=None):
+    badge_html = f'<span class="sec-badge">{badge}</span>' if badge else ''
+    st.markdown(f"""
+    <div class="sec-header">
+      <div class="sec-icon">{icon}</div>
+      <p class="sec-title">{title}</p>
+      {badge_html}
+    </div>""", unsafe_allow_html=True)
+
 def hr():
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
+
+def ui_success(msg): st.markdown(f'<div class="alert-success">✅ {msg}</div>', unsafe_allow_html=True)
+def ui_warn(msg):    st.markdown(f'<div class="alert-warn">⚠️ {msg}</div>', unsafe_allow_html=True)
+def ui_info_anom(msg): st.markdown(f'<div class="alert-info">ℹ️ {msg}</div>', unsafe_allow_html=True)
+def ui_danger(msg):  st.markdown(f'<div class="alert-danger">🚨 {msg}</div>', unsafe_allow_html=True)
+
+def anom_metrics(*items, red_indices=None):
+    red_indices = red_indices or []
+    html = '<div class="metric-grid">'
+    for i, (val, label) in enumerate(items):
+        val_class = "metric-val metric-val-red" if i in red_indices else "metric-val"
+        html += f'<div class="metric-card"><div class="{val_class}">{val}</div><div class="metric-label">{label}</div></div>'
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 def style_mpl(fig, axes=None):
     fig.patch.set_facecolor(FIG_BG)
@@ -542,31 +631,148 @@ def make_elbow():
     return list(range(2,10)),[165,124,100,76,62,49,44,39]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ANOMALY DETECTION HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+REQUIRED_FILES = {
+    "dailyActivity_merged.csv":     {"key_cols": ["ActivityDate","TotalSteps","Calories"],    "label": "Daily Activity",     "icon": "🏃"},
+    "hourlySteps_merged.csv":       {"key_cols": ["ActivityHour","StepTotal"],                 "label": "Hourly Steps",       "icon": "👣"},
+    "hourlyIntensities_merged.csv": {"key_cols": ["ActivityHour","TotalIntensity"],            "label": "Hourly Intensities", "icon": "⚡"},
+    "minuteSleep_merged.csv":       {"key_cols": ["date","value","logId"],                     "label": "Minute Sleep",       "icon": "💤"},
+    "heartrate_seconds_merged.csv": {"key_cols": ["Time","Value"],                             "label": "Heart Rate",         "icon": "❤️"},
+}
+
+def parse_dt(series):
+    return pd.to_datetime(series, infer_datetime_format=True, errors="coerce")
+
+def score_match(df, req_info):
+    return sum(1 for col in req_info["key_cols"] if col in df.columns)
+
+def detect_hr_anomalies(master, hr_high=100, hr_low=50, residual_sigma=2.0):
+    df = master[["Id","Date","AvgHR","MaxHR","MinHR"]].dropna().copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    hr_daily = df.groupby("Date")["AvgHR"].mean().reset_index()
+    hr_daily.columns = ["Date","AvgHR"]
+    hr_daily = hr_daily.sort_values("Date")
+    hr_daily["thresh_high"]  = hr_daily["AvgHR"] > hr_high
+    hr_daily["thresh_low"]   = hr_daily["AvgHR"] < hr_low
+    hr_daily["rolling_med"]  = hr_daily["AvgHR"].rolling(3, center=True, min_periods=1).median()
+    hr_daily["residual"]     = hr_daily["AvgHR"] - hr_daily["rolling_med"]
+    resid_std                = hr_daily["residual"].std()
+    hr_daily["resid_anomaly"]= hr_daily["residual"].abs() > (residual_sigma * resid_std)
+    hr_daily["is_anomaly"]   = hr_daily["thresh_high"] | hr_daily["thresh_low"] | hr_daily["resid_anomaly"]
+    def reason(row):
+        r = []
+        if row["thresh_high"]:   r.append(f"HR>{hr_high}")
+        if row["thresh_low"]:    r.append(f"HR<{hr_low}")
+        if row["resid_anomaly"]: r.append(f"Residual±{residual_sigma:.0f}σ")
+        return ", ".join(r) if r else ""
+    hr_daily["reason"] = hr_daily.apply(reason, axis=1)
+    return hr_daily
+
+def detect_steps_anomalies(master, steps_low=500, steps_high=25000, residual_sigma=2.0):
+    df = master[["Date","TotalSteps"]].dropna().copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    steps_daily = df.groupby("Date")["TotalSteps"].mean().reset_index()
+    steps_daily = steps_daily.sort_values("Date")
+    steps_daily["thresh_low"]    = steps_daily["TotalSteps"] < steps_low
+    steps_daily["thresh_high"]   = steps_daily["TotalSteps"] > steps_high
+    steps_daily["rolling_med"]   = steps_daily["TotalSteps"].rolling(3, center=True, min_periods=1).median()
+    steps_daily["residual"]      = steps_daily["TotalSteps"] - steps_daily["rolling_med"]
+    resid_std                    = steps_daily["residual"].std()
+    steps_daily["resid_anomaly"] = steps_daily["residual"].abs() > (residual_sigma * resid_std)
+    steps_daily["is_anomaly"]    = steps_daily["thresh_low"] | steps_daily["thresh_high"] | steps_daily["resid_anomaly"]
+    def reason(row):
+        r = []
+        if row["thresh_low"]:    r.append(f"Steps<{steps_low}")
+        if row["thresh_high"]:   r.append(f"Steps>{steps_high}")
+        if row["resid_anomaly"]: r.append(f"Residual±{residual_sigma:.0f}σ")
+        return ", ".join(r) if r else ""
+    steps_daily["reason"] = steps_daily.apply(reason, axis=1)
+    return steps_daily
+
+def detect_sleep_anomalies(master, sleep_low=60, sleep_high=600, residual_sigma=2.0):
+    df = master[["Date","TotalSleepMinutes"]].dropna().copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    sleep_daily = df.groupby("Date")["TotalSleepMinutes"].mean().reset_index()
+    sleep_daily = sleep_daily.sort_values("Date")
+    sleep_daily["thresh_low"]    = (sleep_daily["TotalSleepMinutes"] > 0) & (sleep_daily["TotalSleepMinutes"] < sleep_low)
+    sleep_daily["thresh_high"]   = sleep_daily["TotalSleepMinutes"] > sleep_high
+    sleep_daily["no_data"]       = sleep_daily["TotalSleepMinutes"] == 0
+    sleep_daily["rolling_med"]   = sleep_daily["TotalSleepMinutes"].rolling(3, center=True, min_periods=1).median()
+    sleep_daily["residual"]      = sleep_daily["TotalSleepMinutes"] - sleep_daily["rolling_med"]
+    resid_std                    = sleep_daily["residual"].std()
+    sleep_daily["resid_anomaly"] = sleep_daily["residual"].abs() > (residual_sigma * resid_std)
+    sleep_daily["is_anomaly"]    = sleep_daily["thresh_low"] | sleep_daily["thresh_high"] | sleep_daily["resid_anomaly"]
+    def reason(row):
+        r = []
+        if row["no_data"]:       r.append("No device worn")
+        if row["thresh_low"]:    r.append(f"Sleep<{sleep_low}min")
+        if row["thresh_high"]:   r.append(f"Sleep>{sleep_high}min")
+        if row["resid_anomaly"]: r.append(f"Residual±{residual_sigma:.0f}σ")
+        return ", ".join(r) if r else ""
+    sleep_daily["reason"] = sleep_daily.apply(reason, axis=1)
+    return sleep_daily
+
+def simulate_accuracy(master, n_inject=10):
+    np.random.seed(42)
+    df = master[["Date","AvgHR","TotalSteps","TotalSleepMinutes"]].dropna().copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df_daily = df.groupby("Date").mean().reset_index().sort_values("Date")
+    results = {}
+    for signal, col, inj_vals, thr_fn in [
+        ("Heart Rate","AvgHR",
+         [115,120,125,35,40,45,118,130,38,42],
+         lambda df: (df["AvgHR"]>100)|(df["AvgHR"]<50)),
+        ("Steps","TotalSteps",
+         [50,100,150,30000,35000,28000,80,200,31000,29000],
+         lambda df: (df["TotalSteps"]<500)|(df["TotalSteps"]>25000)),
+        ("Sleep","TotalSleepMinutes",
+         [10,20,30,700,750,800,15,25,710,720],
+         lambda df: ((df["TotalSleepMinutes"]>0)&(df["TotalSleepMinutes"]<60))|(df["TotalSleepMinutes"]>600)),
+    ]:
+        sim = df_daily[["Date",col]].copy()
+        idx = np.random.choice(len(sim), n_inject, replace=False)
+        sim.loc[sim.index[idx], col] = np.random.choice(inj_vals, n_inject, replace=True)
+        sim["rolling_med"] = sim[col].rolling(3, center=True, min_periods=1).median()
+        sim["residual"]    = sim[col] - sim["rolling_med"]
+        resid_std = sim["residual"].std()
+        sim["detected"] = thr_fn(sim) | (sim["residual"].abs() > 2*resid_std)
+        tp = sim.iloc[idx]["detected"].sum()
+        results[signal] = {"injected":n_inject,"detected":int(tp),"accuracy":round(tp/n_inject*100,1)}
+    results["Overall"] = round(np.mean([results[k]["accuracy"] for k in ["Heart Rate","Steps","Sleep"]]),1)
+    return results
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ███  SIDEBAR  ███████████████████████████████████████████████████████████████
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    # Logo
     st.markdown('<div class="sb-logo">💪 FitPulse</div>', unsafe_allow_html=True)
     st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
 
-    # ── MODE SWITCHER ──────────────────────────────────────────────────────
     st.markdown('<span class="sb-mode-label">⚡ Switch Mode</span>', unsafe_allow_html=True)
-    mode_options = ["📊  Analytics Platform", "🧬  ML Pipeline"]
+    mode_options = ["📊  Analytics Platform", "🧬  ML Pipeline", "🚨  Anomaly Detection"]
+    mode_idx = {"Analytics":0,"ML Pipeline":1,"Anomaly Detection":2}.get(st.session_state.mode, 0)
     chosen = st.selectbox(
         label="mode_sel",
         options=mode_options,
-        index=0 if st.session_state.mode == "Analytics" else 1,
+        index=mode_idx,
         label_visibility="collapsed",
         key="mode_select",
     )
-    new_mode = "Analytics" if chosen.startswith("📊") else "ML Pipeline"
+    if chosen.startswith("📊"):
+        new_mode = "Analytics"
+    elif chosen.startswith("🧬"):
+        new_mode = "ML Pipeline"
+    else:
+        new_mode = "Anomaly Detection"
+
     if new_mode != st.session_state.mode:
         st.session_state.mode = new_mode
         st.rerun()
 
     st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
 
-    # ── ANALYTICS SIDEBAR CONTENT ──────────────────────────────────────────
+    # ── ANALYTICS SIDEBAR ─────────────────────────────────────────────────────
     if st.session_state.mode == "Analytics":
         st.markdown('<div class="sb-tag">Analytics Platform</div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-section-label">Upload Dataset</div>', unsafe_allow_html=True)
@@ -594,8 +800,8 @@ with st.sidebar:
                 f'⚠️ {int(di.isnull().sum().sum()):,} null cells</div>',
                 unsafe_allow_html=True)
 
-    # ── ML SIDEBAR CONTENT ─────────────────────────────────────────────────
-    else:
+    # ── ML SIDEBAR ────────────────────────────────────────────────────────────
+    elif st.session_state.mode == "ML Pipeline":
         st.markdown('<div class="sb-tag">ML Pipeline</div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-section-label">Pipeline Progress</div>', unsafe_allow_html=True)
         prog = st.session_state.ml_progress
@@ -619,8 +825,36 @@ with st.sidebar:
         st.markdown('<div class="sb-section-label">DBSCAN Min Samples</div>', unsafe_allow_html=True)
         st.slider("ms_lbl",1,10,2,key="ms_sl",label_visibility="collapsed")
 
+    # ── ANOMALY SIDEBAR ───────────────────────────────────────────────────────
+    else:
+        st.markdown('<div class="sb-tag">Anomaly Detection</div>', unsafe_allow_html=True)
+        steps_done = sum([st.session_state.anom_files_loaded,
+                          st.session_state.anom_anomaly_done,
+                          st.session_state.anom_simulation_done])
+        pct = int(steps_done / 3 * 100)
+        st.markdown('<div class="sb-section-label">Pipeline Progress</div>', unsafe_allow_html=True)
+        st.progress(pct / 100)
+        st.caption(f"{pct}%")
+        st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
+        for done, icon, label in [
+            (st.session_state.anom_files_loaded,    "📂", "Data Loaded"),
+            (st.session_state.anom_anomaly_done,    "🚨", "Anomalies Detected"),
+            (st.session_state.anom_simulation_done, "🎯", "Accuracy Simulated"),
+        ]:
+            tick = "✅" if done else "⭕"
+            st.markdown(f'<div class="ml-stage">{tick} {icon} {label}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-label">Thresholds</div>', unsafe_allow_html=True)
+        st.session_state["anom_hr_high"] = st.number_input("HR High (bpm)",    value=100, min_value=80,  max_value=180, key="sb_hr_high")
+        st.session_state["anom_hr_low"]  = st.number_input("HR Low (bpm)",     value=50,  min_value=30,  max_value=70,  key="sb_hr_low")
+        st.session_state["anom_st_low"]  = st.number_input("Steps Low",        value=500, min_value=0,   max_value=2000,key="sb_st_low")
+        st.session_state["anom_sl_low"]  = st.number_input("Sleep Low (min)",  value=60,  min_value=0,   max_value=120, key="sb_sl_low")
+        st.session_state["anom_sl_high"] = st.number_input("Sleep High (min)", value=600, min_value=300, max_value=900, key="sb_sl_high")
+        st.session_state["anom_sigma"]   = st.slider("Residual σ", 1.0, 4.0, 2.0, 0.5, key="sb_sigma")
+
     st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
-    lbl = "Analytics · v3.0" if st.session_state.mode=="Analytics" else "ML Pipeline · v2.0"
+    lbl_map = {"Analytics":"Analytics · v3.0","ML Pipeline":"ML Pipeline · v2.0","Anomaly Detection":"Anomaly Detection · v1.0"}
+    lbl = lbl_map.get(st.session_state.mode,"v5.0")
     st.markdown(
         f'<div style="font-size:0.65rem;color:#9B7BAE;text-align:center;line-height:1.7;">'
         f'FitPulse {lbl}<br>Thistle Purple Edition</div>', unsafe_allow_html=True)
@@ -634,7 +868,6 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state.mode == "Analytics":
 
-    # Banner
     st.markdown("""
 <div class="banner">
   <div class="banner-glow"></div>
@@ -645,7 +878,6 @@ if st.session_state.mode == "Analytics":
   <div class="banner-chip">ENTERPRISE DATA PLATFORM</div>
 </div>""", unsafe_allow_html=True)
 
-    # File load
     uploaded = st.session_state.get("file_up_ana", None)
     if uploaded is not None:
         if uploaded.name != st.session_state.file_name:
@@ -665,7 +897,6 @@ if st.session_state.mode == "Analytics":
             except Exception as e:
                 st.error(f"❌ Could not read file: {e}"); st.stop()
 
-    # STEP 1
     step_hdr("1","📁","Upload CSV")
     if st.session_state.df_raw is None:
         st.markdown('<div class="info-box">📌 Use the <strong>sidebar uploader</strong> on the left to upload your Fitness Health CSV file.</div>', unsafe_allow_html=True)
@@ -680,7 +911,6 @@ if st.session_state.mode == "Analytics":
             st.dataframe(df.head(50),use_container_width=True,height=260)
     hr()
 
-    # STEP 2
     step_hdr("2","🔍","Null Value Inspector")
     if st.button("🔍  Run Null Value Check",disabled=(st.session_state.df_raw is None),key="btn_null"):
         run_loader("Scanning for null values…",[
@@ -725,7 +955,6 @@ if st.session_state.mode == "Analytics":
             fig2=apply_theme(fig2,250); st.plotly_chart(fig2,use_container_width=True,key="null_heatmap")
     hr()
 
-    # STEP 3
     step_hdr("3","⚙️","Data Preprocessing")
     if st.button("⚙️  Run Preprocessing",disabled=(st.session_state.df_raw is None),key="btn_prep"):
         run_loader("Preprocessing pipeline…",[
@@ -798,7 +1027,6 @@ if st.session_state.mode == "Analytics":
             else: st.dataframe(pd.DataFrame({"Column":na_a.index,"Null Count":na_a.values}),hide_index=True,use_container_width=True)
     hr()
 
-    # STEP 4
     step_hdr("4","👁️","Preview Cleaned Dataset")
     if st.session_state.df_clean is not None:
         dfc=st.session_state.df_clean; all_c=dfc.columns.tolist()
@@ -816,7 +1044,6 @@ if st.session_state.mode == "Analytics":
         st.markdown('<div class="info-box">⚙️ Run <strong>Step 3 Preprocessing</strong> first.</div>',unsafe_allow_html=True)
     hr()
 
-    # STEP 5 — EDA
     step_hdr("5","📊","Exploratory Data Analysis")
     if st.button("📊  Run Full EDA",disabled=(st.session_state.df_clean is None),key="btn_eda"):
         run_loader("Running EDA pipeline…",[
@@ -834,14 +1061,12 @@ if st.session_state.mode == "Analytics":
         dt_cols=dfe.select_dtypes(include=["datetime64[ns]"]).columns.tolist()
         st.markdown(f'<div class="ok-box" style="margin-bottom:1.2rem;">✅ &nbsp;<strong>{len(dfe):,} rows</strong> &nbsp;·&nbsp;<strong>{len(num_cols)} numeric</strong> &nbsp;·&nbsp;<strong>{len(cat_cols)} categorical</strong> &nbsp;·&nbsp;<strong>{len(dt_cols)} datetime</strong> &nbsp;·&nbsp;<strong>0 nulls</strong></div>',unsafe_allow_html=True)
 
-        # 5a descriptive
         st.markdown('<div class="eda-card">',unsafe_allow_html=True)
         st.markdown('<div class="eda-card-title">📋 Descriptive Statistics</div>',unsafe_allow_html=True)
         if num_cols: st.dataframe(dfe[num_cols].describe().round(3),use_container_width=True,height=295)
         else: st.warning("No numeric columns found.")
         st.markdown('</div>',unsafe_allow_html=True)
 
-        # 5b distributions
         if num_cols:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">📈 Numeric Distributions</div>',unsafe_allow_html=True)
@@ -855,7 +1080,6 @@ if st.session_state.mode == "Analytics":
                         st.plotly_chart(fig,use_container_width=True,key=f"hist_{cn}")
             st.markdown('</div>',unsafe_allow_html=True)
 
-        # 5c correlation
         if len(num_cols)>=2:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">🔥 Correlation Heatmap</div>',unsafe_allow_html=True)
@@ -868,7 +1092,6 @@ if st.session_state.mode == "Analytics":
             fig.update_layout(coloraxis_colorbar=dict(title="r",tickfont=dict(size=10,color=TXT),len=0.8))
             st.plotly_chart(fig,use_container_width=True,key="corr_heatmap"); st.markdown('</div>',unsafe_allow_html=True)
 
-        # 5d categorical
         if cat_cols:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">🏷️ Categorical Distributions</div>',unsafe_allow_html=True)
@@ -890,7 +1113,6 @@ if st.session_state.mode == "Analytics":
                         st.plotly_chart(fig,use_container_width=True,key=f"cat_{cn}_{gi}")
             st.markdown('</div>',unsafe_allow_html=True)
 
-        # 5e time series
         if dt_cols and num_cols:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">📅 Time Series Trends</div>',unsafe_allow_html=True)
@@ -918,7 +1140,6 @@ if st.session_state.mode == "Analytics":
         elif not dt_cols:
             st.markdown('<div class="info-box">ℹ️ No datetime column detected.</div>',unsafe_allow_html=True)
 
-        # 5f box plots
         if num_cols:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">📦 Outlier Detection — Box Plots</div>',unsafe_allow_html=True)
@@ -940,7 +1161,6 @@ if st.session_state.mode == "Analytics":
                 st.dataframe(pd.DataFrame(iqr_rows),hide_index=True,use_container_width=True)
             st.markdown('</div>',unsafe_allow_html=True)
 
-        # 5g scatter
         if len(num_cols)>=2:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">🔭 Scatter Plot Explorer</div>',unsafe_allow_html=True)
@@ -960,7 +1180,6 @@ if st.session_state.mode == "Analytics":
                     fig.add_trace(go.Scatter(x=x_line,y=np.polyval(z,x_line),mode="lines",name=f"Trend (slope={z[0]:.3f})",line=dict(color="#E74C3C",width=2,dash="dash")))
             fig=apply_theme(fig,440); st.plotly_chart(fig,use_container_width=True,key="scatter_main"); st.markdown('</div>',unsafe_allow_html=True)
 
-        # 5h pair plot
         if len(num_cols)>=3:
             st.markdown('<div class="eda-card">',unsafe_allow_html=True)
             st.markdown('<div class="eda-card-title">🔗 Pair Plot — Multi-variable Relationships</div>',unsafe_allow_html=True)
@@ -983,7 +1202,7 @@ if st.session_state.mode == "Analytics":
 # ══════════════════════════════════════════════════════════════════════════════
 #  MODE B — ML PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
-else:
+elif st.session_state.mode == "ML Pipeline":
     st.markdown("""
 <div class="fp-hero">
   <div style="margin-bottom:8px;"><span class="fp-tag">FEATURE EXTRACTION &amp; MODELING</span></div>
@@ -993,7 +1212,6 @@ else:
 
     tab1,tab2,tab3,tab4=st.tabs(["📁 Data Loading","📊 TSFresh Features","📈 Prophet Forecast","🔵 Clustering"])
 
-    # TAB 1 — Data Loading
     with tab1:
         st.markdown(f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{ACC};">📁 Data Loading</div><span class="steps-badge">Steps 1–9</span></div>',unsafe_allow_html=True)
         st.markdown('<div class="fp-info">Select all 5 Fitbit CSV files at once. Files are auto-detected by column structure.</div>',unsafe_allow_html=True)
@@ -1027,7 +1245,6 @@ else:
         if st.button("🎲 Load Demo Data & Proceed"):
             st.session_state.ml_dfs={"demo":True}; st.session_state.ml_progress=20; st.rerun()
 
-    # TAB 2 — TSFresh
     with tab2:
         st.markdown(f'<div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{ACC};margin-bottom:10px;">📊 TSFresh Feature Extraction</div>',unsafe_allow_html=True)
         if st.session_state.ml_progress<20:
@@ -1063,7 +1280,6 @@ else:
                     st.dataframe(feat_df.round(3).style.background_gradient(cmap="RdBu_r",axis=None),use_container_width=True)
                 c1,c2,c3=st.columns(3); c1.metric("Features",len(feat_df.columns)); c2.metric("Users",len(feat_df.index)); c3.metric("Missing","0")
 
-    # TAB 3 — Prophet
     with tab3:
         st.markdown(f'<div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{ACC};margin-bottom:10px;">📈 Prophet Trend Forecast</div>',unsafe_allow_html=True)
         if st.session_state.ml_progress<40:
@@ -1109,7 +1325,6 @@ else:
                     fig3.tight_layout(pad=2); st.pyplot(fig3); plt.close(fig3)
                 c1,c2,c3,c4=st.columns(4); c1.metric("Avg HR","81.3 bpm"); c2.metric("Avg Steps","8,240"); c3.metric("Avg Sleep","248 min"); c4.metric("Horizon",f"{fdays} days")
 
-    # TAB 4 — Clustering
     with tab4:
         st.markdown(f'<div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{ACC};margin-bottom:10px;">🔵 Clustering — KMeans · DBSCAN · PCA · t-SNE</div>',unsafe_allow_html=True)
         if st.session_state.ml_progress<60:
@@ -1176,3 +1391,508 @@ else:
 
     st.markdown("---")
     st.markdown(f'<div style="text-align:center;font-size:.8rem;color:{SOFT};font-family:Syne,sans-serif;padding:4px 0 8px;">🧬 FitPulse ML Pipeline &nbsp;·&nbsp; TSFresh · Prophet · KMeans · DBSCAN · PCA · t-SNE</div>',unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MODE C — ANOMALY DETECTION
+# ══════════════════════════════════════════════════════════════════════════════
+else:
+    # Hero banner
+    st.markdown(f"""
+<div class="fp-hero-anom">
+  <div class="anom-badge">ANOMALY DETECTION &amp; VISUALIZATION</div>
+  <h1 class="anom-title">🚨 FitPulse Anomaly Detection</h1>
+  <p class="anom-sub">Threshold Violations · Residual Analysis · DBSCAN Outlier Clusters · Accuracy Simulation</p>
+</div>
+""", unsafe_allow_html=True)
+
+    # Pull sidebar threshold values
+    hr_high = st.session_state.get("anom_hr_high", 100)
+    hr_low  = st.session_state.get("anom_hr_low",  50)
+    st_low  = st.session_state.get("anom_st_low",  500)
+    sl_low  = st.session_state.get("anom_sl_low",  60)
+    sl_high = st.session_state.get("anom_sl_high", 600)
+    sigma   = st.session_state.get("anom_sigma",   2.0)
+
+    # ── SECTION 1: DATA LOADING ───────────────────────────────────────────────
+    anom_sec("📂", "Data Loading", "Step 1")
+    ui_info_anom("Upload the 5 Fitbit CSV files. Files are auto-detected by column structure — any filename works.")
+
+    uploaded_files = st.file_uploader(
+        "📁 Drop all 5 Fitbit CSV files here",
+        type="csv", accept_multiple_files=True, key="anom_uploader",
+        help="Hold Ctrl (Windows) or Cmd (Mac) to select multiple files"
+    )
+
+    detected = {}
+    if uploaded_files:
+        raw_uploads = []
+        for uf in uploaded_files:
+            try:
+                df_tmp = pd.read_csv(uf)
+                raw_uploads.append((uf.name, df_tmp))
+            except Exception:
+                pass
+        used_names = set()
+        for req_name, finfo in REQUIRED_FILES.items():
+            best_score, best_name, best_df = 0, None, None
+            for uname, udf in raw_uploads:
+                s = score_match(udf, finfo)
+                if s > best_score:
+                    best_score, best_name, best_df = s, uname, udf
+            if best_score >= 2:
+                detected[req_name] = best_df
+                used_names.add(best_name)
+
+    n_up = len(detected)
+    # File status grid
+    status_html = f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.6rem;margin:1rem 0">'
+    for req_name, finfo in REQUIRED_FILES.items():
+        found = req_name in detected
+        bg  = "rgba(30,132,73,0.07)" if found else "rgba(211,84,0,0.07)"
+        bor = "rgba(30,132,73,0.35)" if found else "rgba(211,84,0,0.35)"
+        ico = "✅" if found else "❌"
+        status_html += f"""
+        <div style="background:{bg};border:1px solid {bor};border-radius:10px;padding:0.65rem 0.85rem">
+          <div style="font-size:1.15rem">{ico} {finfo['icon']}</div>
+          <div style="font-size:0.71rem;font-weight:600;color:{TXT};margin-top:0.3rem">{finfo['label']}</div>
+          <div style="font-size:0.64rem;color:{SOFT};font-family:'DM Mono',monospace;margin-top:0.1rem">
+            {'Found ✓' if found else 'Missing'}
+          </div>
+        </div>"""
+    status_html += "</div>"
+    st.markdown(status_html, unsafe_allow_html=True)
+
+    anom_metrics((n_up,"Detected"),(5-n_up,"Missing"),("✓" if n_up==5 else "✗","Ready"))
+
+    if n_up < 5:
+        missing_lbl = [REQUIRED_FILES[r]["label"] for r in REQUIRED_FILES if r not in detected]
+        if missing_lbl: ui_warn(f"Missing: {', '.join(missing_lbl)}")
+
+    if st.button("⚡ Load & Build Master DataFrame", disabled=(n_up < 5), key="anom_load_btn"):
+        with st.spinner("Parsing and building master..."):
+            try:
+                daily    = detected["dailyActivity_merged.csv"].copy()
+                hourly_s = detected["hourlySteps_merged.csv"].copy()
+                hourly_i = detected["hourlyIntensities_merged.csv"].copy()
+                sleep    = detected["minuteSleep_merged.csv"].copy()
+                hr       = detected["heartrate_seconds_merged.csv"].copy()
+
+                daily["ActivityDate"]    = parse_dt(daily["ActivityDate"])
+                hourly_s["ActivityHour"] = parse_dt(hourly_s["ActivityHour"])
+                hourly_i["ActivityHour"] = parse_dt(hourly_i["ActivityHour"])
+                sleep["date"]            = parse_dt(sleep["date"])
+                hr["Time"]               = parse_dt(hr["Time"])
+
+                daily    = daily.dropna(subset=["ActivityDate"])
+                hourly_s = hourly_s.dropna(subset=["ActivityHour"])
+                hourly_i = hourly_i.dropna(subset=["ActivityHour"])
+                sleep    = sleep.dropna(subset=["date"])
+                hr       = hr.dropna(subset=["Time"])
+
+                hr_minute = (hr.set_index("Time")
+                             .groupby("Id")["Value"]
+                             .resample("1min").mean()
+                             .reset_index())
+                hr_minute.columns = ["Id","Time","HeartRate"]
+                hr_minute = hr_minute.dropna()
+                hr_minute["Date"] = hr_minute["Time"].dt.date
+                hr_daily = (hr_minute.groupby(["Id","Date"])["HeartRate"]
+                            .agg(["mean","max","min","std"])
+                            .reset_index()
+                            .rename(columns={"mean":"AvgHR","max":"MaxHR","min":"MinHR","std":"StdHR"}))
+
+                sleep["Date"] = sleep["date"].dt.date
+                sleep_daily = (sleep.groupby(["Id","Date"])
+                               .agg(TotalSleepMinutes=("value","count"),
+                                    DominantSleepStage=("value", lambda x: x.mode()[0]))
+                               .reset_index())
+
+                master = daily.copy().rename(columns={"ActivityDate":"Date"})
+                master["Date"] = master["Date"].dt.date
+                master = master.merge(hr_daily,    on=["Id","Date"], how="left")
+                master = master.merge(sleep_daily, on=["Id","Date"], how="left")
+                master["TotalSleepMinutes"]  = master["TotalSleepMinutes"].fillna(0)
+                master["DominantSleepStage"] = master["DominantSleepStage"].fillna(0)
+                for col in ["AvgHR","MaxHR","MinHR","StdHR"]:
+                    master[col] = master.groupby("Id")[col].transform(lambda x: x.fillna(x.median()))
+
+                st.session_state.anom_daily     = daily
+                st.session_state.anom_hourly_s  = hourly_s
+                st.session_state.anom_hourly_i  = hourly_i
+                st.session_state.anom_sleep     = sleep
+                st.session_state.anom_hr        = hr
+                st.session_state.anom_hr_minute = hr_minute
+                st.session_state.anom_master    = master
+                st.session_state.anom_files_loaded = True
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error building master: {e}")
+                import traceback; st.code(traceback.format_exc())
+
+    if st.session_state.anom_files_loaded:
+        master = st.session_state.anom_master
+        ui_success(f"Master DataFrame ready — {master.shape[0]:,} rows · {master['Id'].nunique()} users")
+        hr()
+
+        # ── SECTION 2: ANOMALY DETECTION ─────────────────────────────────────
+        anom_sec("🚨", "Anomaly Detection — Three Methods", "Steps 2–4")
+
+        st.markdown(f"""
+        <div class="anom-card">
+          <div class="anom-card-title">Detection Methods Applied</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.8rem;font-size:0.82rem">
+            <div style="background:{FIG_BG};border:1px solid {BORD};border-radius:10px;padding:0.85rem">
+              <div style="color:{ACCENT_RED};font-weight:700;margin-bottom:0.4rem">① Threshold Violations</div>
+              <div style="color:{SOFT}">Hard upper/lower limits on HR, Steps, Sleep. Simple, interpretable, fast.</div>
+            </div>
+            <div style="background:{FIG_BG};border:1px solid {BORD};border-radius:10px;padding:0.85rem">
+              <div style="color:{ACC2};font-weight:700;margin-bottom:0.4rem">② Residual-Based</div>
+              <div style="color:{SOFT}">Rolling median as baseline. Flag days where actual deviates by ±{sigma:.0f}σ.</div>
+            </div>
+            <div style="background:{FIG_BG};border:1px solid {BORD};border-radius:10px;padding:0.85rem">
+              <div style="color:{ACCENT3};font-weight:700;margin-bottom:0.4rem">③ DBSCAN Outliers</div>
+              <div style="color:{SOFT}">Users labelled −1 by DBSCAN. Structural outliers — behaviour fits no cluster.</div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🔍 Run Anomaly Detection (All 3 Methods)", key="anom_detect_btn"):
+            with st.spinner("Detecting anomalies..."):
+                try:
+                    anom_hr_r    = detect_hr_anomalies(master, hr_high, hr_low, sigma)
+                    anom_steps_r = detect_steps_anomalies(master, st_low, 25000, sigma)
+                    anom_sleep_r = detect_sleep_anomalies(master, sl_low, sl_high, sigma)
+                    st.session_state.anom_hr_result    = anom_hr_r
+                    st.session_state.anom_steps_result = anom_steps_r
+                    st.session_state.anom_sleep_result = anom_sleep_r
+                    st.session_state.anom_anomaly_done = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Detection error: {e}")
+
+        if st.session_state.anom_anomaly_done:
+            anom_hr_r    = st.session_state.anom_hr_result
+            anom_steps_r = st.session_state.anom_steps_result
+            anom_sleep_r = st.session_state.anom_sleep_result
+
+            n_hr    = int(anom_hr_r["is_anomaly"].sum())
+            n_steps = int(anom_steps_r["is_anomaly"].sum())
+            n_sleep = int(anom_sleep_r["is_anomaly"].sum())
+            n_total = n_hr + n_steps + n_sleep
+
+            ui_danger(f"Total anomalies flagged: {n_total}  (HR: {n_hr} · Steps: {n_steps} · Sleep: {n_sleep})")
+            anom_metrics(
+                (n_hr,"HR Anomalies"),(n_steps,"Steps Anomalies"),
+                (n_sleep,"Sleep Anomalies"),(n_total,"Total Flags"),
+                red_indices=[0,1,2,3]
+            )
+
+            # ── CHART 1: Heart Rate ───────────────────────────────────────────
+            hr()
+            anom_sec("❤️", "Heart Rate — Anomaly Chart", "Step 2")
+            st.markdown('<div class="anom-tag">🚨 ' + f"{n_hr} anomalous days detected</div>", unsafe_allow_html=True)
+            st.markdown('<div class="step-pill">◆ Step 2 &nbsp;·&nbsp; Threshold + Residual Detection</div>', unsafe_allow_html=True)
+            ui_info_anom(f"Red markers = anomaly days. Dashed lines = thresholds (HR>{hr_high} or HR<{hr_low}). Shaded band = ±{sigma:.0f}σ residual zone.")
+
+            hr_anom = anom_hr_r[anom_hr_r["is_anomaly"]]
+            fig_hr  = go.Figure()
+            rolling_upper = anom_hr_r["rolling_med"] + sigma * anom_hr_r["residual"].std()
+            rolling_lower = anom_hr_r["rolling_med"] - sigma * anom_hr_r["residual"].std()
+            fig_hr.add_trace(go.Scatter(x=anom_hr_r["Date"],y=rolling_upper,mode="lines",line=dict(width=0),showlegend=False,hoverinfo="skip"))
+            fig_hr.add_trace(go.Scatter(x=anom_hr_r["Date"],y=rolling_lower,mode="lines",fill="tonexty",
+                fillcolor=hex_rgba(ACC,0.1),line=dict(width=0),name=f"±{sigma:.0f}σ Expected Band"))
+            fig_hr.add_trace(go.Scatter(x=anom_hr_r["Date"],y=anom_hr_r["AvgHR"],mode="lines+markers",name="Avg Heart Rate",
+                line=dict(color=ACC,width=2.5),marker=dict(size=5,color=ACC),
+                hovertemplate="<b>%{x}</b><br>HR: %{y:.1f} bpm<extra></extra>"))
+            fig_hr.add_trace(go.Scatter(x=anom_hr_r["Date"],y=anom_hr_r["rolling_med"],mode="lines",name="Rolling Median",
+                line=dict(color=ACCENT3,width=1.5,dash="dot"),
+                hovertemplate="<b>%{x}</b><br>Median: %{y:.1f} bpm<extra></extra>"))
+            if not hr_anom.empty:
+                fig_hr.add_trace(go.Scatter(x=hr_anom["Date"],y=hr_anom["AvgHR"],mode="markers",name="🚨 Anomaly",
+                    marker=dict(color=ACCENT_RED,size=14,symbol="circle",line=dict(color="white",width=2)),
+                    hovertemplate="<b>%{x}</b><br>HR: %{y:.1f} bpm<br><b>ANOMALY</b><extra>⚠️</extra>"))
+                for _, row in hr_anom.iterrows():
+                    fig_hr.add_annotation(x=row["Date"],y=row["AvgHR"],text=f"⚠️ {row['reason']}",
+                        showarrow=True,arrowhead=2,arrowcolor=ACCENT_RED,arrowsize=1.2,
+                        ax=0,ay=-45,font=dict(color=ACCENT_RED,size=9),
+                        bgcolor=CARD,bordercolor="rgba(192,57,43,0.4)",borderwidth=1,borderpad=4)
+            fig_hr.add_hline(y=hr_high,line_dash="dash",line_color=ACCENT_RED,line_width=1.5,opacity=0.7,
+                annotation_text=f"High Threshold ({hr_high} bpm)",annotation_position="top right",annotation_font_color=ACCENT_RED)
+            fig_hr.add_hline(y=hr_low,line_dash="dash",line_color=ACC2,line_width=1.5,opacity=0.7,
+                annotation_text=f"Low Threshold ({hr_low} bpm)",annotation_position="bottom right",annotation_font_color=ACC2)
+            apply_anom_theme(fig_hr,"❤️ Heart Rate — Anomaly Detection (Real Fitbit Data)")
+            fig_hr.update_layout(height=480,xaxis_title="Date",yaxis_title="Heart Rate (bpm)")
+            st.plotly_chart(fig_hr,use_container_width=True,key="anom_hr_chart")
+
+            if not hr_anom.empty:
+                with st.expander(f"📋 View {len(hr_anom)} HR Anomaly Records"):
+                    st.dataframe(hr_anom[hr_anom["is_anomaly"]][["Date","AvgHR","rolling_med","residual","reason"]]
+                        .rename(columns={"rolling_med":"Expected","residual":"Deviation","reason":"Anomaly Reason"})
+                        .round(2),use_container_width=True)
+
+            # ── CHART 2: Sleep ────────────────────────────────────────────────
+            hr()
+            anom_sec("💤", "Sleep Pattern — Anomaly Visualization", "Step 3")
+            st.markdown(f'<div class="anom-tag">🚨 {n_sleep} anomalous sleep days detected</div>', unsafe_allow_html=True)
+            st.markdown('<div class="step-pill">◆ Step 3 &nbsp;·&nbsp; Threshold Detection on Sleep Minutes</div>', unsafe_allow_html=True)
+            ui_info_anom(f"Purple = sleep line. Red diamonds = anomaly days. Green band = healthy sleep zone ({sl_low}–{sl_high} min).")
+
+            sleep_anom = anom_sleep_r[anom_sleep_r["is_anomaly"]]
+            fig_sleep  = make_subplots(rows=2,cols=1,shared_xaxes=True,row_heights=[0.7,0.3],
+                subplot_titles=["Sleep Duration (minutes/night)","Deviation from Expected"],vertical_spacing=0.08)
+            fig_sleep.add_hrect(y0=sl_low,y1=sl_high,fillcolor="rgba(30,132,73,0.07)",line_width=0,
+                annotation_text="✅ Healthy Sleep Zone",annotation_position="top right",
+                annotation_font_color=ACCENT3,row=1,col=1)
+            fig_sleep.add_trace(go.Scatter(x=anom_sleep_r["Date"],y=anom_sleep_r["TotalSleepMinutes"],
+                mode="lines+markers",name="Sleep Minutes",line=dict(color=ACC2,width=2.5),
+                marker=dict(size=5,color=ACC2),hovertemplate="<b>%{x}</b><br>Sleep: %{y:.0f} min<extra></extra>"),row=1,col=1)
+            fig_sleep.add_trace(go.Scatter(x=anom_sleep_r["Date"],y=anom_sleep_r["rolling_med"],
+                mode="lines",name="Rolling Median",line=dict(color=ACCENT3,width=1.5,dash="dot"),
+                hovertemplate="<b>%{x}</b><br>Median: %{y:.0f} min<extra></extra>"),row=1,col=1)
+            if not sleep_anom.empty:
+                fig_sleep.add_trace(go.Scatter(x=sleep_anom["Date"],y=sleep_anom["TotalSleepMinutes"],
+                    mode="markers",name="🚨 Sleep Anomaly",
+                    marker=dict(color=ACCENT_RED,size=14,symbol="diamond",line=dict(color="white",width=2)),
+                    hovertemplate="<b>%{x}</b><br>Sleep: %{y:.0f} min<br><b>ANOMALY</b><extra>⚠️</extra>"),row=1,col=1)
+                for _, row_d in sleep_anom.iterrows():
+                    fig_sleep.add_annotation(x=row_d["Date"],y=row_d["TotalSleepMinutes"],
+                        text=f"⚠️ {row_d['reason']}",showarrow=True,arrowhead=2,arrowcolor=ACCENT_RED,
+                        arrowsize=1.2,ax=20,ay=-40,font=dict(color=ACCENT_RED,size=9),
+                        bgcolor=CARD,bordercolor="rgba(192,57,43,0.4)",borderwidth=1,borderpad=3,row=1,col=1)
+            fig_sleep.add_hline(y=sl_low,line_dash="dash",line_color=ACCENT_RED,line_width=1.5,opacity=0.7,
+                row=1,col=1,annotation_text=f"Min ({sl_low} min)",annotation_font_color=ACCENT_RED)
+            fig_sleep.add_hline(y=sl_high,line_dash="dash",line_color=ACC,line_width=1.5,opacity=0.7,
+                row=1,col=1,annotation_text=f"Max ({sl_high} min)",annotation_font_color=ACC)
+            colors_resid = [ACCENT_RED if v else ACC2 for v in anom_sleep_r["resid_anomaly"]]
+            fig_sleep.add_trace(go.Bar(x=anom_sleep_r["Date"],y=anom_sleep_r["residual"],name="Residual",
+                marker_color=colors_resid,hovertemplate="<b>%{x}</b><br>Residual: %{y:.0f} min<extra></extra>"),row=2,col=1)
+            fig_sleep.add_hline(y=0,line_dash="solid",line_color=SOFT,line_width=1,row=2,col=1)
+            apply_anom_theme(fig_sleep)
+            fig_sleep.update_layout(height=560,showlegend=True,paper_bgcolor=CARD,plot_bgcolor=FIG_BG,font_color=TXT)
+            fig_sleep.update_xaxes(gridcolor=BORD,tickfont_color=SOFT)
+            fig_sleep.update_yaxes(gridcolor=BORD,tickfont_color=SOFT)
+            st.plotly_chart(fig_sleep,use_container_width=True,key="anom_sleep_chart")
+
+            if not sleep_anom.empty:
+                with st.expander(f"📋 View {len(sleep_anom)} Sleep Anomaly Records"):
+                    st.dataframe(sleep_anom[sleep_anom["is_anomaly"]][["Date","TotalSleepMinutes","rolling_med","residual","reason"]]
+                        .rename(columns={"TotalSleepMinutes":"Sleep (min)","rolling_med":"Expected","residual":"Deviation","reason":"Anomaly Reason"})
+                        .round(2),use_container_width=True)
+
+            # ── CHART 3: Steps ────────────────────────────────────────────────
+            hr()
+            anom_sec("🚶", "Step Count Trend — Alerts & Anomalies", "Step 4")
+            st.markdown(f'<div class="anom-tag">🚨 {n_steps} anomalous step-count days detected</div>', unsafe_allow_html=True)
+            st.markdown('<div class="step-pill">◆ Step 4 &nbsp;·&nbsp; Threshold + Residual Detection on Steps</div>', unsafe_allow_html=True)
+            ui_info_anom(f"Shaded red bands = anomaly alert days. Dashed lines = step thresholds. Bar chart shows deviation from trend.")
+
+            steps_anom = anom_steps_r[anom_steps_r["is_anomaly"]]
+            fig_steps  = make_subplots(rows=2,cols=1,shared_xaxes=True,row_heights=[0.65,0.35],
+                subplot_titles=["Daily Steps (avg across users)","Residual Deviation from Trend"],vertical_spacing=0.08)
+            for _, row_d in steps_anom.iterrows():
+                d      = str(row_d["Date"])
+                d_next = str(pd.Timestamp(d) + pd.Timedelta(days=1))[:10]
+                fig_steps.add_vrect(x0=d,x1=d_next,fillcolor="rgba(192,57,43,0.12)",
+                    line_color="rgba(192,57,43,0.45)",line_width=1.5,row=1,col=1)
+            fig_steps.add_trace(go.Scatter(x=anom_steps_r["Date"],y=anom_steps_r["TotalSteps"],
+                mode="lines+markers",name="Avg Daily Steps",line=dict(color=ACCENT3,width=2.5),
+                marker=dict(size=5,color=ACCENT3),hovertemplate="<b>%{x}</b><br>Steps: %{y:,.0f}<extra></extra>"),row=1,col=1)
+            fig_steps.add_trace(go.Scatter(x=anom_steps_r["Date"],y=anom_steps_r["rolling_med"],
+                mode="lines",name="Trend (Rolling Median)",line=dict(color=ACC,width=2,dash="dash"),
+                hovertemplate="<b>%{x}</b><br>Trend: %{y:,.0f}<extra></extra>"),row=1,col=1)
+            if not steps_anom.empty:
+                fig_steps.add_trace(go.Scatter(x=steps_anom["Date"],y=steps_anom["TotalSteps"],
+                    mode="markers",name="🚨 Steps Anomaly",
+                    marker=dict(color=ACCENT_RED,size=14,symbol="triangle-up",line=dict(color="white",width=2)),
+                    hovertemplate="<b>%{x}</b><br>Steps: %{y:,.0f}<br><b>ALERT</b><extra>⚠️</extra>"),row=1,col=1)
+            fig_steps.add_hline(y=st_low,line_dash="dash",line_color=ACCENT_RED,line_width=1.5,opacity=0.8,
+                row=1,col=1,annotation_text=f"Low Alert ({st_low:,} steps)",annotation_font_color=ACCENT_RED)
+            fig_steps.add_hline(y=25000,line_dash="dash",line_color=ACC2,line_width=1.5,opacity=0.7,
+                row=1,col=1,annotation_text="High Alert (25,000 steps)",annotation_font_color=ACC2)
+            res_colors = [ACCENT_RED if v else ACCENT3 for v in anom_steps_r["resid_anomaly"]]
+            fig_steps.add_trace(go.Bar(x=anom_steps_r["Date"],y=anom_steps_r["residual"],name="Residual",
+                marker_color=res_colors,hovertemplate="<b>%{x}</b><br>Deviation: %{y:,.0f} steps<extra></extra>"),row=2,col=1)
+            fig_steps.add_hline(y=0,line_dash="solid",line_color=SOFT,line_width=1,row=2,col=1)
+            apply_anom_theme(fig_steps)
+            fig_steps.update_layout(height=560,showlegend=True,paper_bgcolor=CARD,plot_bgcolor=FIG_BG,font_color=TXT)
+            fig_steps.update_xaxes(gridcolor=BORD,tickfont_color=SOFT)
+            fig_steps.update_yaxes(gridcolor=BORD,tickfont_color=SOFT)
+            st.plotly_chart(fig_steps,use_container_width=True,key="anom_steps_chart")
+
+            if not steps_anom.empty:
+                with st.expander(f"📋 View {len(steps_anom)} Steps Anomaly Records"):
+                    st.dataframe(steps_anom[steps_anom["is_anomaly"]][["Date","TotalSteps","rolling_med","residual","reason"]]
+                        .rename(columns={"TotalSteps":"Steps","rolling_med":"Expected","residual":"Deviation","reason":"Anomaly Reason"})
+                        .round(2),use_container_width=True)
+
+            # ── CHART 4: DBSCAN ───────────────────────────────────────────────
+            hr()
+            anom_sec("🔍", "DBSCAN Outlier Users — Cluster-Based Anomalies", "Step 5")
+            st.markdown('<div class="step-pill">◆ Step 5 &nbsp;·&nbsp; Structural Outlier Detection via DBSCAN</div>', unsafe_allow_html=True)
+            st.markdown('<div class="anom-tag">🚨 Outlier = users with atypical overall behaviour pattern</div>', unsafe_allow_html=True)
+            ui_info_anom("Users are clustered on their activity profile. Users labelled −1 are structural outliers — their behaviour doesn't fit any group.")
+
+            cluster_cols = ["TotalSteps","Calories","VeryActiveMinutes",
+                            "FairlyActiveMinutes","LightlyActiveMinutes",
+                            "SedentaryMinutes","TotalSleepMinutes"]
+            try:
+                from sklearn.preprocessing import StandardScaler
+                from sklearn.cluster import DBSCAN
+                from sklearn.decomposition import PCA as skPCA
+
+                cf = master.groupby("Id")[cluster_cols].mean().round(3).dropna()
+                scaler    = StandardScaler()
+                X_scaled  = scaler.fit_transform(cf)
+                db        = DBSCAN(eps=2.2, min_samples=2)
+                db_labels = db.fit_predict(X_scaled)
+                pca_sk    = skPCA(n_components=2, random_state=42)
+                X_pca     = pca_sk.fit_transform(X_scaled)
+                var       = pca_sk.explained_variance_ratio_ * 100
+
+                cf["DBSCAN"]  = db_labels
+                outlier_users = cf[cf["DBSCAN"]==-1].index.tolist()
+                n_outliers    = len(outlier_users)
+                n_clusters    = len(set(db_labels)) - (1 if -1 in db_labels else 0)
+
+                anom_metrics((n_clusters,"DBSCAN Clusters"),(n_outliers,"Outlier Users"),
+                             (len(cf)-n_outliers,"Normal Users"),red_indices=[1])
+
+                CC = [ACC, ACC2, "#F39C12", "#1ABC9C", "#E91E63"]
+                fig_db = go.Figure()
+                for lbl in sorted(set(db_labels)):
+                    if lbl == -1: continue
+                    mask = db_labels == lbl
+                    fig_db.add_trace(go.Scatter(
+                        x=X_pca[mask,0],y=X_pca[mask,1],mode="markers+text",name=f"Cluster {lbl}",
+                        marker=dict(size=14,color=CC[lbl%len(CC)],opacity=0.85,line=dict(color="white",width=1.5)),
+                        text=[str(uid)[-4:] for uid in cf.index[mask]],
+                        textposition="top center",textfont=dict(size=8,color=TXT),
+                        hovertemplate="<b>User ...%{text}</b><br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>"))
+                if n_outliers > 0:
+                    mask_out = db_labels == -1
+                    fig_db.add_trace(go.Scatter(
+                        x=X_pca[mask_out,0],y=X_pca[mask_out,1],mode="markers+text",name="🚨 Outlier / Anomaly",
+                        marker=dict(size=20,color=ACCENT_RED,symbol="x",line=dict(color="white",width=2.5)),
+                        text=[str(uid)[-4:] for uid in cf.index[mask_out]],
+                        textposition="top center",textfont=dict(size=9,color=ACCENT_RED),
+                        hovertemplate="<b>⚠️ OUTLIER User ...%{text}</b><br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra>ANOMALY</extra>"))
+                    for i, uid in enumerate(cf.index[mask_out]):
+                        xi,yi = X_pca[mask_out][i]
+                        fig_db.add_shape(type="circle",x0=xi-0.3,y0=yi-0.3,x1=xi+0.3,y1=yi+0.3,
+                            line=dict(color=ACCENT_RED,width=2,dash="dot"),fillcolor="rgba(192,57,43,0.08)")
+                apply_anom_theme(fig_db,f"🔍 DBSCAN Outlier Detection — PCA Projection (eps=2.2)")
+                fig_db.update_layout(height=500,
+                    xaxis_title=f"PC1 ({var[0]:.1f}% variance)",yaxis_title=f"PC2 ({var[1]:.1f}% variance)")
+                st.plotly_chart(fig_db,use_container_width=True,key="anom_dbscan_chart")
+
+                if outlier_users:
+                    st.markdown(f'<div class="anom-card" style="border-color:rgba(192,57,43,0.4)"><div class="anom-card-title" style="color:{ACCENT_RED}">🚨 Outlier User Profiles</div></div>', unsafe_allow_html=True)
+                    st.dataframe(cf[cf["DBSCAN"]==-1][cluster_cols].round(2),use_container_width=True)
+            except ImportError:
+                ui_warn("sklearn not installed. Run: pip install scikit-learn")
+            except Exception as e:
+                ui_warn(f"DBSCAN clustering skipped: {e}")
+
+            hr()
+
+            # ── SECTION 3: ACCURACY SIMULATION ───────────────────────────────
+            anom_sec("🎯", "Simulated Detection Accuracy — 90%+ Target", "Step 6")
+            st.markdown('<div class="step-pill">◆ Step 6 &nbsp;·&nbsp; Inject Known Anomalies → Measure Detection Rate</div>', unsafe_allow_html=True)
+            ui_info_anom("10 known anomalies are injected into each signal. Detection runs and measures how many it catches. Validates the 90%+ accuracy requirement.")
+
+            if st.button("🎯 Run Accuracy Simulation (10 injected anomalies per signal)", key="anom_sim_btn"):
+                with st.spinner("Simulating..."):
+                    try:
+                        sim = simulate_accuracy(master, n_inject=10)
+                        st.session_state.anom_sim_results  = sim
+                        st.session_state.anom_simulation_done = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Simulation error: {e}")
+
+            if st.session_state.anom_simulation_done and st.session_state.anom_sim_results:
+                sim     = st.session_state.anom_sim_results
+                overall = sim["Overall"]
+                passed  = overall >= 90.0
+
+                if passed:
+                    ui_success(f"Overall accuracy: {overall}% — ✅ MEETS 90%+ REQUIREMENT")
+                else:
+                    ui_warn(f"Overall accuracy: {overall}% — below 90% target, adjust thresholds in sidebar")
+
+                html = '<div class="metric-grid">'
+                for signal in ["Heart Rate","Steps","Sleep"]:
+                    r   = sim[signal]
+                    acc = r["accuracy"]
+                    col = ACCENT3 if acc >= 90 else ACCENT_RED
+                    html += f"""
+                    <div class="metric-card" style="border-color:{col}44">
+                      <div style="font-size:1.75rem;font-weight:800;color:{col};font-family:'Syne',sans-serif">{acc}%</div>
+                      <div style="font-size:0.79rem;color:{TXT};font-weight:600;margin:0.3rem 0">{signal}</div>
+                      <div style="font-size:0.7rem;color:{SOFT}">{r['detected']}/{r['injected']} detected</div>
+                      <div style="font-size:0.68rem;color:{'#1E8449' if acc>=90 else ACCENT_RED}">{'✅ PASS' if acc>=90 else '⚠️ LOW'}</div>
+                    </div>"""
+                html += f"""
+                    <div class="metric-card" style="border-color:{'#1E8449' if passed else ACCENT_RED}88;
+                      background:{'rgba(30,132,73,0.07)' if passed else 'rgba(192,57,43,0.07)'}">
+                      <div style="font-size:1.75rem;font-weight:800;color:{'#1E8449' if passed else ACCENT_RED};font-family:'Syne',sans-serif">{overall}%</div>
+                      <div style="font-size:0.79rem;color:{TXT};font-weight:600;margin:0.3rem 0">Overall</div>
+                      <div style="font-size:0.68rem;color:{'#1E8449' if passed else ACCENT_RED}">{'✅ 90%+ ACHIEVED' if passed else '⚠️ BELOW TARGET'}</div>
+                    </div>"""
+                html += '</div>'
+                st.markdown(html, unsafe_allow_html=True)
+
+                signals    = ["Heart Rate","Steps","Sleep"]
+                accs       = [sim[s]["accuracy"] for s in signals]
+                bar_colors = [ACCENT3 if a >= 90 else ACCENT_RED for a in accs]
+
+                fig_acc = go.Figure()
+                fig_acc.add_trace(go.Bar(x=signals,y=accs,marker_color=bar_colors,
+                    text=[f"{a}%" for a in accs],textposition="outside",
+                    textfont=dict(color=TXT,size=14,family="Syne, sans-serif"),
+                    hovertemplate="<b>%{x}</b><br>Accuracy: %{y}%<extra></extra>",name="Detection Accuracy"))
+                fig_acc.add_hline(y=90,line_dash="dash",line_color=ACCENT_RED,line_width=2,
+                    annotation_text="90% Target",annotation_font_color=ACCENT_RED,annotation_position="top right")
+                apply_anom_theme(fig_acc,"🎯 Simulated Anomaly Detection Accuracy")
+                fig_acc.update_layout(height=380,yaxis_range=[0,115],
+                    yaxis_title="Detection Accuracy (%)",xaxis_title="Signal",showlegend=False)
+                st.plotly_chart(fig_acc,use_container_width=True,key="anom_accuracy_chart")
+
+            hr()
+
+            # ── SUMMARY CHECKLIST ─────────────────────────────────────────────
+            anom_sec("✅", "Summary")
+            checklist = [
+                ("🚨","Threshold Violations",  st.session_state.anom_anomaly_done,    f"HR>{hr_high}/{hr_low}, Steps<{st_low}, Sleep<{sl_low}/<{sl_high}"),
+                ("📉","Residual-Based",         st.session_state.anom_anomaly_done,    f"Rolling median ±{sigma:.0f}σ on all 3 signals"),
+                ("🔍","DBSCAN Outliers",        st.session_state.anom_anomaly_done,    "Structural user-level anomalies via clustering"),
+                ("❤️","HR Chart",               st.session_state.anom_anomaly_done,    "Interactive Plotly — annotations + threshold lines"),
+                ("💤","Sleep Chart",            st.session_state.anom_anomaly_done,    "Dual subplot — duration + residual bars"),
+                ("🚶","Steps Chart",            st.session_state.anom_anomaly_done,    "Trend + alert bands + residual deviation"),
+                ("🎯","Accuracy Simulation",    st.session_state.anom_simulation_done,"10 injected anomalies per signal, 90%+ target"),
+            ]
+            for icon, label, done, detail in checklist:
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:1rem;padding:0.55rem 0;border-bottom:1px solid {BORD}">
+                  <span style="font-size:1rem">{'✅' if done else '⬜'}</span>
+                  <span style="font-size:0.88rem;font-weight:600;color:{TXT};min-width:185px">{icon} {label}</span>
+                  <span style="font-size:0.78rem;color:{SOFT}">{detail}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+    else:
+        st.markdown(f"""
+        <div class="anom-card" style="text-align:center;padding:2.8rem;margin-top:1rem">
+          <div style="font-size:2.8rem;margin-bottom:0.9rem">🚨</div>
+          <div style="font-family:'Syne',sans-serif;font-size:1.15rem;font-weight:700;color:{TXT};margin-bottom:0.5rem">
+            Upload Your Fitbit Files to Begin
+          </div>
+          <div style="color:{SOFT};font-size:0.86rem">
+            Upload all 5 CSV files above and click <b>Load &amp; Build Master DataFrame</b>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown(f'<div class="footer">🚨 <b>FitPulse Anomaly Detection</b> &nbsp;·&nbsp; Threshold · Residual · DBSCAN · Accuracy Simulation &nbsp;·&nbsp; Thistle Purple Edition</div>',unsafe_allow_html=True)
