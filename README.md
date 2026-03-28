@@ -64,7 +64,7 @@ Tools: Git, VS Code
 
 1️⃣ Clone the Repository
 
-git clone https://github.com/your-username/FitPulse-Health-Anomaly-Detection-from-Fitness-Devices.git
+git clone https://github.com/AbhishekShah272002/FitPulse-Health-Anomaly-Detection-from-Fitness-Devices.git
 cd FitPulse-Health-Anomaly-Detection-from-Fitness-Devices
 2️⃣ Install Dependencies
 pip install -r requirements.txt
