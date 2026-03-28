@@ -40,6 +40,7 @@ FitPulse/
 ├── Milestone1.ipynb        # Data Analytics
 ├── Milestone2.ipynb        # Feature Engineering
 ├── Milestone3.ipynb        # ML Modeling
+├── Milestone4.ipynb        # Insights_dashboard
 │
 ├── preprocessing.py        # Data cleaning & preprocessing
 ├── pattern_extraction.py   # Feature extraction logic
