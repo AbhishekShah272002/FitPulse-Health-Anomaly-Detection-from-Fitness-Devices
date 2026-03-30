@@ -1,6 +1,7 @@
 🚀 FitPulse AI Platform
 
 Health Anomaly Detection from Fitness Devices
+
 📌 Overview
 
 FitPulse AI Platform is an end-to-end data science application designed to analyze fitness device data and detect health anomalies using machine learning. The platform integrates data analytics, preprocessing, feature engineering, and predictive modeling into an interactive dashboard built with Streamlit.
@@ -39,6 +40,7 @@ FitPulse/
 ├── Milestone1.ipynb        # Data Analytics
 ├── Milestone2.ipynb        # Feature Engineering
 ├── Milestone3.ipynb        # ML Modeling
+├── Milestone4.ipynb        # Insights_dashboard
 │
 ├── preprocessing.py        # Data cleaning & preprocessing
 ├── pattern_extraction.py   # Feature extraction logic
@@ -62,7 +64,7 @@ Tools: Git, VS Code
 
 1️⃣ Clone the Repository
 
-git clone https://github.com/your-username/FitPulse-Health-Anomaly-Detection-from-Fitness-Devices.git
+git clone https://github.com/AbhishekShah272002/FitPulse-Health-Anomaly-Detection-from-Fitness-Devices.git
 cd FitPulse-Health-Anomaly-Detection-from-Fitness-Devices
 2️⃣ Install Dependencies
 pip install -r requirements.txt
