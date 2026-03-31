@@ -72,6 +72,10 @@ _defaults = {
     "ins_anom_hr":       None,
     "ins_anom_steps":    None,
     "ins_anom_sleep":    None,
+    # — shared fitbit dataset (uploaded once in ML Pipeline, used everywhere) —
+    "shared_detected":   {},   # dict of req_name -> DataFrame
+    "shared_master":     None, # merged master DataFrame
+    "shared_built":      False,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -925,6 +929,19 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
     except ImportError:
         return None
 
+    def safe(text):
+        """Replace non-latin-1 characters so fpdf doesn't crash."""
+        return (str(text)
+                .replace("\u2014", "-")   # em dash
+                .replace("\u2013", "-")   # en dash
+                .replace("\u2019", "'")   # right single quote
+                .replace("\u2018", "'")   # left single quote
+                .replace("\u201c", '"')   # left double quote
+                .replace("\u201d", '"')   # right double quote
+                .replace("\u00b1", "+/-") # plus-minus
+                .replace("\u03c3", "sigma")  # sigma
+                .encode("latin-1", errors="replace").decode("latin-1"))
+
     class PDF(FPDF):
         def header(self):
             self.set_fill_color(26, 10, 34)
@@ -932,40 +949,40 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
             self.set_font("Helvetica", "B", 13)
             self.set_text_color(155, 89, 182)
             self.set_y(4)
-            self.cell(0, 10, "FitPulse Anomaly Detection Report — Insights Dashboard", align="C")
+            self.cell(0, 10, safe("FitPulse Anomaly Detection Report - Insights Dashboard"), align="C")
             self.set_text_color(180, 154, 190)
             self.set_font("Helvetica", "", 7)
             self.set_y(13)
-            self.cell(0, 4, f"Generated: {datetime.now().strftime('%d %B %Y  %H:%M')}", align="C")
+            self.cell(0, 4, safe(f"Generated: {datetime.now().strftime('%d %B %Y  %H:%M')}"), align="C")
             self.ln(6)
 
         def footer(self):
             self.set_y(-13)
             self.set_font("Helvetica", "", 7)
             self.set_text_color(148, 100, 148)
-            self.cell(0, 8, f"FitPulse Unified Platform  ·  Thistle Purple Edition  ·  Page {self.page_no()}", align="C")
+            self.cell(0, 8, safe(f"FitPulse Unified Platform  -  Thistle Purple Edition  -  Page {self.page_no()}"), align="C")
 
         def section(self, title, color=(107,45,139)):
             self.ln(3)
             self.set_fill_color(*color)
             self.set_text_color(255, 255, 255)
             self.set_font("Helvetica", "B", 10)
-            self.cell(0, 8, f"  {title}", fill=True, ln=True)
+            self.cell(0, 8, safe(f"  {title}"), fill=True, ln=True)
             self.set_text_color(30, 10, 40)
             self.ln(2)
 
         def kv(self, key, val):
             self.set_font("Helvetica", "B", 9)
             self.set_text_color(80, 50, 90)
-            self.cell(58, 6, key + ":", ln=False)
+            self.cell(58, 6, safe(key + ":"), ln=False)
             self.set_font("Helvetica", "B", 9)
             self.set_text_color(40, 15, 55)
-            self.cell(0, 6, str(val), ln=True)
+            self.cell(0, 6, safe(str(val)), ln=True)
 
         def para(self, text, size=8.5):
             self.set_font("Helvetica", "", size)
             self.set_text_color(60, 40, 70)
-            self.multi_cell(0, 5, text)
+            self.multi_cell(0, 5, safe(text))
             self.ln(1)
 
     pdf = PDF()
@@ -977,12 +994,15 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
     n_sleep = int(anom_sleep["is_anomaly"].sum())
     n_users = master["Id"].nunique()
     n_days  = master["Date"].nunique()
-    date_range = f"{pd.to_datetime(master['Date']).min().strftime('%d %b %Y')} — {pd.to_datetime(master['Date']).max().strftime('%d %b %Y')}"
+    date_range_str = (
+        f"{pd.to_datetime(master['Date']).min().strftime('%d %b %Y')} to "
+        f"{pd.to_datetime(master['Date']).max().strftime('%d %b %Y')}"
+    )
 
     pdf.section("1. EXECUTIVE SUMMARY", (107,45,139))
-    pdf.kv("Dataset",     "Real Fitbit Device Data — Kaggle (arashnic/fitbit)")
+    pdf.kv("Dataset",     "Real Fitbit Device Data - Kaggle (arashnic/fitbit)")
     pdf.kv("Users",       f"{n_users} participants")
-    pdf.kv("Date Range",  date_range)
+    pdf.kv("Date Range",  date_range_str)
     pdf.kv("Total Days",  f"{n_days} days of observations")
     pdf.kv("Pipeline",    "FitPulse Insights Dashboard v6.0")
     pdf.ln(2)
@@ -1000,16 +1020,16 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
     pdf.kv("Steps Low Alert",   f"< {int(st_low):,} steps/day")
     pdf.kv("Sleep Low",         f"< {int(sl_low)} minutes/night")
     pdf.kv("Sleep High",        f"> {int(sl_high)} minutes/night")
-    pdf.kv("Residual Sigma",    f"+/- {float(sigma):.1f}σ from rolling median")
+    pdf.kv("Residual Sigma",    f"+/- {float(sigma):.1f} sigma from rolling median")
     pdf.ln(2)
 
     pdf.section("4. METHODOLOGY", (107,45,139))
     pdf.para(
         "Three complementary detection methods were applied:\n\n"
-        "  1. THRESHOLD VIOLATIONS — Hard upper/lower bounds on each metric.\n\n"
-        "  2. RESIDUAL-BASED DETECTION — 3-day rolling median as baseline; "
-        f"flags days deviating by >{float(sigma):.1f}σ.\n\n"
-        "  3. DBSCAN OUTLIER CLUSTERING — User-level structural outliers via density clustering."
+        "  1. THRESHOLD VIOLATIONS - Hard upper/lower bounds on each metric.\n\n"
+        "  2. RESIDUAL-BASED DETECTION - 3-day rolling median as baseline; "
+        f"flags days deviating by >{float(sigma):.1f} sigma.\n\n"
+        "  3. DBSCAN OUTLIER CLUSTERING - User-level structural outliers via density clustering."
     )
 
     pdf.add_page()
@@ -1022,21 +1042,21 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
                 tmp.write(img_bytes); tmp_path = tmp.name
             pdf.set_font("Helvetica", "B", 9)
             pdf.set_text_color(80, 50, 90)
-            pdf.cell(0, 6, label, ln=True)
+            pdf.cell(0, 6, safe(label), ln=True)
             pdf.image(tmp_path, x=10, w=w, h=h)
             os.unlink(tmp_path)
             pdf.ln(3)
         except Exception as ex:
             pdf.set_font("Helvetica", "", 8)
             pdf.set_text_color(150, 50, 50)
-            pdf.cell(0, 6, f"[Chart unavailable: {ex}]", ln=True); pdf.ln(2)
+            pdf.cell(0, 6, safe(f"[Chart unavailable: {ex}]"), ln=True); pdf.ln(2)
 
-    embed_fig(fig_hr,    "Figure 1 — Heart Rate with Anomaly Highlights")
-    embed_fig(fig_steps, "Figure 2 — Step Count Trend with Alert Bands")
-    embed_fig(fig_sleep, "Figure 3 — Sleep Pattern Visualization")
+    embed_fig(fig_hr,    "Figure 1 - Heart Rate with Anomaly Highlights")
+    embed_fig(fig_steps, "Figure 2 - Step Count Trend with Alert Bands")
+    embed_fig(fig_sleep, "Figure 3 - Sleep Pattern Visualization")
 
     pdf.add_page()
-    pdf.section("6. ANOMALY RECORDS — HEART RATE", (192,57,43))
+    pdf.section("6. ANOMALY RECORDS - HEART RATE", (192,57,43))
 
     def table(df, cols, rename_map, max_rows=20):
         df2 = df[df["is_anomaly"]][cols].copy().rename(columns=rename_map)
@@ -1046,7 +1066,7 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
         pdf.set_fill_color(26,10,34); pdf.set_text_color(216,191,216)
         pdf.set_font("Helvetica","B",7.5)
         for col in df2.columns:
-            pdf.cell(col_w,6,str(col)[:18],border=0,fill=True)
+            pdf.cell(col_w,6,safe(str(col)[:18]),border=0,fill=True)
         pdf.ln()
         pdf.set_font("Helvetica","",7.5)
         for i,(_,row) in enumerate(df2.head(max_rows).iterrows()):
@@ -1054,19 +1074,19 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
             pdf.set_text_color(216,191,216)
             for val in row:
                 cell_text = f"{val:.2f}" if isinstance(val,float) else str(val)[:18]
-                pdf.cell(col_w,5.5,cell_text,border=0,fill=True)
+                pdf.cell(col_w,5.5,safe(cell_text),border=0,fill=True)
             pdf.ln()
         if len(df2)>max_rows:
             pdf.set_text_color(155,89,182); pdf.set_font("Helvetica","I",7)
-            pdf.cell(0,5,f"  ... and {len(df2)-max_rows} more records (see CSV export)",ln=True)
+            pdf.cell(0,5,safe(f"  ... and {len(df2)-max_rows} more records (see CSV export)"),ln=True)
         pdf.ln(3)
 
     table(anom_hr,    ["Date","AvgHR","rolling_med","residual","reason"],
           {"AvgHR":"Avg HR","rolling_med":"Expected","residual":"Deviation","reason":"Reason"})
-    pdf.section("7. ANOMALY RECORDS — STEPS", (40,130,80))
+    pdf.section("7. ANOMALY RECORDS - STEPS", (40,130,80))
     table(anom_steps, ["Date","TotalSteps","rolling_med","residual","reason"],
           {"TotalSteps":"Steps","rolling_med":"Expected","residual":"Deviation","reason":"Reason"})
-    pdf.section("8. ANOMALY RECORDS — SLEEP", (107,45,139))
+    pdf.section("8. ANOMALY RECORDS - SLEEP", (107,45,139))
     table(anom_sleep, ["Date","TotalSleepMinutes","rolling_med","residual","reason"],
           {"TotalSleepMinutes":"Sleep (min)","rolling_med":"Expected","residual":"Deviation","reason":"Reason"})
 
@@ -1077,17 +1097,17 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
     col_w2 = 180 // (len(profile_cols)+1)
     pdf.set_fill_color(26,10,34); pdf.set_text_color(216,191,216)
     pdf.set_font("Helvetica","B",8)
-    pdf.cell(col_w2,6,"User ID",border=0,fill=True)
+    pdf.cell(col_w2,6,safe("User ID"),border=0,fill=True)
     for col in profile_cols:
-        pdf.cell(col_w2,6,col[:12],border=0,fill=True)
+        pdf.cell(col_w2,6,safe(col[:12]),border=0,fill=True)
     pdf.ln()
     pdf.set_font("Helvetica","",7.5)
     for i,(uid,row) in enumerate(user_profile.iterrows()):
         pdf.set_fill_color(45,16,64) if i%2==0 else pdf.set_fill_color(35,10,50)
         pdf.set_text_color(216,191,216)
-        pdf.cell(col_w2,5.5,f"...{str(uid)[-6:]}",border=0,fill=True)
+        pdf.cell(col_w2,5.5,safe(f"...{str(uid)[-6:]}"),border=0,fill=True)
         for val in row:
-            pdf.cell(col_w2,5.5,f"{val:,.0f}",border=0,fill=True)
+            pdf.cell(col_w2,5.5,safe(f"{val:,.0f}"),border=0,fill=True)
         pdf.ln()
 
     pdf.ln(4)
@@ -1100,9 +1120,73 @@ def generate_pdf_report(master, anom_hr, anom_steps, anom_sleep,
         "values and subtle pattern deviations."
     )
 
-    pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    buf = io.BytesIO(pdf_bytes); buf.seek(0)
-    return buf
+    # Generate PDF and return as BytesIO
+    try:
+        # Write PDF to a temporary file, then read it back as bytes
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            pdf.output(tmp.name)
+            tmp_path = tmp.name
+        
+        # Read the PDF file and convert to BytesIO
+        with open(tmp_path, 'rb') as f:
+            pdf_bytes = f.read()
+        
+        # Clean up temporary file
+        os.unlink(tmp_path)
+        
+        # Verify PDF has content
+        if not pdf_bytes or len(pdf_bytes) == 0:
+            return None
+        
+        buf = io.BytesIO(pdf_bytes)
+        buf.seek(0)
+        return buf
+    except Exception as e:
+        st.error(f"PDF generation error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
+
+def build_shared_master(detected):
+    """Parse the 5 detected DataFrames and build the merged master. Stores to session_state."""
+    daily    = detected["dailyActivity_merged.csv"].copy()
+    hourly_s = detected["hourlySteps_merged.csv"].copy()
+    hourly_i = detected["hourlyIntensities_merged.csv"].copy()
+    sleep    = detected["minuteSleep_merged.csv"].copy()
+    hr_df    = detected["heartrate_seconds_merged.csv"].copy()
+    daily["ActivityDate"]    = parse_dt(daily["ActivityDate"])
+    hourly_s["ActivityHour"] = parse_dt(hourly_s["ActivityHour"])
+    hourly_i["ActivityHour"] = parse_dt(hourly_i["ActivityHour"])
+    sleep["date"]            = parse_dt(sleep["date"])
+    hr_df["Time"]            = parse_dt(hr_df["Time"])
+    
+    # Drop rows with NaT values BEFORE calling .dt.date to avoid NaTType error
+    hr_df = hr_df.dropna(subset=["Time","Value"])
+    sleep = sleep.dropna(subset=["date","value"])
+    daily = daily.dropna(subset=["ActivityDate"])
+    
+    hr_minute = (hr_df.set_index("Time").groupby("Id")["Value"].resample("1min").mean().reset_index())
+    hr_minute.columns = ["Id","Time","HeartRate"]
+    hr_minute = hr_minute.dropna(subset=["Time"])
+    hr_minute["Date"] = hr_minute["Time"].dt.normalize().dt.date
+    hr_daily = (hr_minute.groupby(["Id","Date"])["HeartRate"].agg(["mean","max","min","std"]).reset_index().rename(columns={"mean":"AvgHR","max":"MaxHR","min":"MinHR","std":"StdHR"}))
+    
+    sleep["Date"] = sleep["date"].dt.normalize().dt.date
+    sleep_daily = (sleep.dropna(subset=["Date"]).groupby(["Id","Date"]).agg(TotalSleepMinutes=("value","count"),DominantSleepStage=("value", lambda x: x.mode()[0] if not x.mode().empty else 0)).reset_index())
+    
+    master = daily.copy().rename(columns={"ActivityDate":"Date"})
+    master["Date"] = master["Date"].dt.normalize().dt.date
+    master = master.merge(hr_daily, on=["Id","Date"], how="left")
+    master = master.merge(sleep_daily, on=["Id","Date"], how="left")
+    master["TotalSleepMinutes"]  = master["TotalSleepMinutes"].fillna(0)
+    master["DominantSleepStage"] = master["DominantSleepStage"].fillna(0)
+    for col in ["AvgHR","MaxHR","MinHR","StdHR"]:
+        if col in master.columns:
+            master[col] = master.groupby("Id")[col].transform(lambda x: x.fillna(x.median()))
+    st.session_state.shared_detected = detected
+    st.session_state.shared_master   = master
+    st.session_state.shared_built    = True
+    return master
 
 def generate_csv_export(anom_hr, anom_steps, anom_sleep):
     hr_out = anom_hr[anom_hr["is_anomaly"]][["Date","AvgHR","rolling_med","residual","reason"]].copy()
@@ -1199,6 +1283,11 @@ with st.sidebar:
     # ── ANOMALY SIDEBAR ───────────────────────────────────────────────────────
     elif st.session_state.mode == "Anomaly Detection":
         st.markdown('<div class="sb-tag">Anomaly Detection</div>', unsafe_allow_html=True)
+        # Dataset source indicator
+        shared_avail = st.session_state.shared_built
+        src_icon = "✅" if shared_avail else "⚠️"
+        src_lbl  = "Shared dataset ready" if shared_avail else "Upload in ML Pipeline first"
+        st.markdown(f'<div class="ml-stage">{src_icon} 📂 {src_lbl}</div>', unsafe_allow_html=True)
         steps_done = sum([st.session_state.anom_files_loaded,
                           st.session_state.anom_anomaly_done,
                           st.session_state.anom_simulation_done])
@@ -1207,7 +1296,7 @@ with st.sidebar:
         st.progress(pct / 100); st.caption(f"{pct}%")
         st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
         for done, icon, label in [
-            (st.session_state.anom_files_loaded,    "📂", "Data Loaded"),
+            (st.session_state.anom_files_loaded,    "📊", "Dataset Loaded"),
             (st.session_state.anom_anomaly_done,    "🚨", "Anomalies Detected"),
             (st.session_state.anom_simulation_done, "🎯", "Accuracy Simulated"),
         ]:
@@ -1220,17 +1309,23 @@ with st.sidebar:
         st.session_state["anom_st_low"]  = st.number_input("Steps Low",        value=500, min_value=0,   max_value=2000,key="sb_st_low")
         st.session_state["anom_sl_low"]  = st.number_input("Sleep Low (min)",  value=60,  min_value=0,   max_value=120, key="sb_sl_low")
         st.session_state["anom_sl_high"] = st.number_input("Sleep High (min)", value=600, min_value=300, max_value=900, key="sb_sl_high")
-        st.session_state["anom_sigma"]   = st.slider("Residual σ", 1.0, 4.0, 2.0, 0.5, key="sb_sigma")
+        st.session_state["anom_sigma"]   = st.slider("Residual sigma", 1.0, 4.0, 2.0, 0.5, key="sb_sigma")
 
     # ── INSIGHTS SIDEBAR ──────────────────────────────────────────────────────
     else:
         st.markdown('<div class="sb-tag">Insights Dashboard</div>', unsafe_allow_html=True)
-        pct_ins = int(st.session_state.ins_pipeline_done) * 100
+        # Progress: shared built (1) + detection done (1) = 2 steps
+        steps_ins_done = sum([
+            st.session_state.shared_built,
+            st.session_state.ins_pipeline_done,
+        ])
+        pct_ins = int(steps_ins_done / 2 * 100)
         st.markdown('<div class="sb-section-label">Pipeline Progress</div>', unsafe_allow_html=True)
         st.progress(pct_ins / 100); st.caption(f"{pct_ins}%")
         st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
         for done, icon, label in [
-            (st.session_state.ins_pipeline_done, "📂", "Data Loaded & Processed"),
+            (st.session_state.shared_built,               "📂", "Dataset Shared"),
+            (st.session_state.ins_pipeline_done,          "🚨", "Detection Done"),
             (st.session_state.ins_anom_hr is not None,    "❤️", "HR Anomalies"),
             (st.session_state.ins_anom_steps is not None, "🚶", "Steps Anomalies"),
             (st.session_state.ins_anom_sleep is not None, "💤", "Sleep Anomalies"),
@@ -1238,13 +1333,30 @@ with st.sidebar:
             tick = "✅" if done else "⭕"
             st.markdown(f'<div class="ml-stage">{tick} {icon} {label}</div>', unsafe_allow_html=True)
         st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="sb-section-label">Thresholds</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-label">Detection Thresholds</div>', unsafe_allow_html=True)
         st.session_state["ins_hr_high"] = st.number_input("HR High (bpm)",    value=100, min_value=80,  max_value=180, key="ins_sb_hr_high")
         st.session_state["ins_hr_low"]  = st.number_input("HR Low (bpm)",     value=50,  min_value=30,  max_value=70,  key="ins_sb_hr_low")
         st.session_state["ins_st_low"]  = st.number_input("Steps Low",        value=500, min_value=0,   max_value=2000,key="ins_sb_st_low")
         st.session_state["ins_sl_low"]  = st.number_input("Sleep Low (min)",  value=60,  min_value=0,   max_value=120, key="ins_sb_sl_low")
         st.session_state["ins_sl_high"] = st.number_input("Sleep High (min)", value=600, min_value=300, max_value=900, key="ins_sb_sl_high")
-        st.session_state["ins_sigma"]   = st.slider("Residual σ", 1.0, 4.0, 2.0, 0.5, key="ins_sb_sigma")
+        st.session_state["ins_sigma"]   = st.slider("Residual sigma", 1.0, 4.0, 2.0, 0.5, key="ins_sb_sigma")
+        # Re-run detection button (only shown when shared data is available)
+        if st.session_state.shared_built and st.session_state.ins_pipeline_done:
+            st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
+            st.markdown('<div class="sb-section-label">Apply new thresholds</div>', unsafe_allow_html=True)
+            if st.button("🔄 Re-run Detection", key="ins_sb_rerun"):
+                _m = st.session_state.shared_master
+                st.session_state.ins_master      = _m
+                st.session_state.ins_anom_hr     = detect_hr_anomalies(
+                    _m, st.session_state["ins_hr_high"], st.session_state["ins_hr_low"],
+                    st.session_state["ins_sigma"])
+                st.session_state.ins_anom_steps  = detect_steps_anomalies(
+                    _m, st.session_state["ins_st_low"], 25000,
+                    st.session_state["ins_sigma"])
+                st.session_state.ins_anom_sleep  = detect_sleep_anomalies(
+                    _m, st.session_state["ins_sl_low"], st.session_state["ins_sl_high"],
+                    st.session_state["ins_sigma"])
+                st.rerun()
 
     st.markdown('<div class="sb-div"></div>', unsafe_allow_html=True)
     lbl_map = {"Analytics":"Analytics · v3.0","ML Pipeline":"ML Pipeline · v2.0",
@@ -1569,31 +1681,69 @@ elif st.session_state.mode == "ML Pipeline":
         st.markdown(f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{ACC};">📁 Data Loading</div><span class="steps-badge">Steps 1–9</span></div>',unsafe_allow_html=True)
         st.markdown('<div class="fp-info">Select all 5 Fitbit CSV files at once. Files are auto-detected by column structure.</div>',unsafe_allow_html=True)
         uploaded_ml=st.file_uploader("📂 Drop all Fitbit CSV files here",type=["csv"],accept_multiple_files=True,key="ml_upload")
-        EXPECTED={"Daily Activity":["ActivityDate","TotalSteps","Calories"],"Hourly Steps":["ActivityHour","StepTotal"],"Hourly Intensities":["ActivityHour","TotalIntensity"],"Minute Sleep":["date","value","logId"],"Heart Rate":["Time","Value"]}
-        ICONS={"Daily Activity":"🏃","Hourly Steps":"👣","Hourly Intensities":"⚡","Minute Sleep":"😴","Heart Rate":"❤️"}
-        detected={}
+        # ── Detect files using REQUIRED_FILES keys (must match build_shared_master exactly) ──
+        detected = {}
         if uploaded_ml:
+            raw_ml = []
             for f in uploaded_ml:
                 try:
-                    tmp=pd.read_csv(f,nrows=2); cols=set(tmp.columns)
-                    for name,req in EXPECTED.items():
-                        if all(c in cols for c in req): f.seek(0); detected[name]=pd.read_csv(f); break
-                except Exception: pass
-        all_ok=True; cards_html='<div class="ds-grid">'
-        for name,ico in ICONS.items():
-            ok=name in detected
-            if not ok: all_ok=False
-            s='<span class="chip-ok">✅ Loaded</span>' if ok else '<span class="chip-miss">❌ Missing</span>'
-            cards_html+=f'<div class="ds-card"><div class="ds-icon">{ico}</div><div class="ds-name">{name}</div><div class="ds-status">{s}</div></div>'
-        st.markdown(cards_html+"</div>",unsafe_allow_html=True); st.markdown("")
+                    df_tmp = pd.read_csv(f)
+                    raw_ml.append((f.name, df_tmp))
+                except Exception:
+                    pass
+            for req_name, finfo in REQUIRED_FILES.items():
+                best_score, best_df = 0, None
+                for uname, udf in raw_ml:
+                    s = score_match(udf, finfo)
+                    if s > best_score:
+                        best_score, best_df = s, udf
+                if best_score >= 2:
+                    detected[req_name] = best_df
+
+        all_ok = len(detected) == 5
+        cards_html = '<div class="ds-grid">'
+        for req_name, finfo in REQUIRED_FILES.items():
+            ok  = req_name in detected
+            s   = '<span class="chip-ok">✅ Loaded</span>' if ok else '<span class="chip-miss">❌ Missing</span>'
+            cards_html += f'<div class="ds-card"><div class="ds-icon">{finfo["icon"]}</div><div class="ds-name">{finfo["label"]}</div><div class="ds-status">{s}</div></div>'
+        st.markdown(cards_html + "</div>", unsafe_allow_html=True); st.markdown("")
+
         if all_ok:
-            total=sum(len(v) for v in detected.values()); st.success("✅ All 5 datasets loaded!")
-            c1,c2,c3=st.columns(3); c1.metric("Files Loaded","5 / 5"); c2.metric("Total Rows",f"{total:,}"); c3.metric("Unique Users","~30")
+            # ── AUTO-SAVE shared dataset immediately when all 5 files are present ──
+            # This runs every rerun while files are uploaded — no button click needed.
+            # We check if the detected files changed to avoid redundant heavy rebuilds.
+            _detected_keys = tuple(sorted(detected.keys()))
+            _prev_keys     = tuple(sorted(st.session_state.shared_detected.keys())) if st.session_state.shared_detected else ()
+            if not st.session_state.shared_built or _detected_keys != _prev_keys:
+                try:
+                    with st.spinner("🔄 Building shared master dataset…"):
+                        build_shared_master(detected)
+                except Exception as _e:
+                    st.warning(f"⚠️ Could not build shared master: {_e}")
+
+            total=sum(len(v) for v in detected.values())
+            st.success("✅ All 5 datasets loaded & shared — Anomaly Detection and Insights Dashboard will use these files automatically.")
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("Files Loaded","5 / 5")
+            c2.metric("Total Rows",f"{total:,}")
+            c3.metric("Shared","✅ Yes")
+            c4.metric("Unique Users","~30")
+
             if st.button("▶ Proceed to TSFresh Features"):
-                st.session_state.ml_dfs=detected; st.session_state.ml_progress=20; st.rerun()
+                st.session_state.ml_dfs=detected
+                st.session_state.ml_progress=max(st.session_state.ml_progress, 20)
+                st.rerun()
         else:
-            missing=[n for n in ICONS if n not in detected]
+            # Clear shared state if files are removed / incomplete
+            if st.session_state.shared_built:
+                st.session_state.shared_built    = False
+                st.session_state.shared_detected = {}
+                st.session_state.shared_master   = None
+                st.session_state.anom_files_loaded = False
+                st.session_state.anom_master       = None
+            missing=[n for n in REQUIRED_FILES.keys() if n not in detected]
             if missing: st.warning(f"⚠️ Missing: {', '.join(missing)}")
+
         st.markdown("---"); st.caption("💡 No CSV files? Use demo mode.")
         if st.button("🎲 Load Demo Data & Proceed"):
             st.session_state.ml_dfs={"demo":True}; st.session_state.ml_progress=20; st.rerun()
@@ -1737,93 +1887,43 @@ elif st.session_state.mode == "Anomaly Detection":
     sl_high = st.session_state.get("anom_sl_high", 600)
     sigma   = st.session_state.get("anom_sigma",   2.0)
 
-    anom_sec("📂", "Data Loading", "Step 1")
-    ui_info_anom("Upload the 5 Fitbit CSV files. Files are auto-detected by column structure.")
+    # ── USE SHARED DATASET (uploaded once in ML Pipeline) ────────────────────
+    anom_sec("📂", "Dataset Status", "Shared from ML Pipeline")
 
-    uploaded_files = st.file_uploader(
-        "📁 Drop all 5 Fitbit CSV files here",
-        type="csv", accept_multiple_files=True, key="anom_uploader",
-        help="Hold Ctrl/Cmd to select multiple files"
-    )
+    shared_ok = st.session_state.shared_built and st.session_state.shared_master is not None
 
-    detected = {}
-    if uploaded_files:
-        raw_uploads = []
-        for uf in uploaded_files:
-            try:
-                df_tmp = pd.read_csv(uf)
-                raw_uploads.append((uf.name, df_tmp))
-            except Exception:
-                pass
+    if not shared_ok:
+        st.markdown(f"""
+        <div class="anom-card" style="text-align:center;padding:2rem">
+          <div style="font-size:2rem;margin-bottom:0.7rem">📂</div>
+          <div style="font-family:Syne,sans-serif;font-size:1.05rem;font-weight:700;color:{TXT};margin-bottom:0.5rem">
+            No dataset loaded yet
+          </div>
+          <div style="color:{SOFT};font-size:0.85rem">
+            Please go to <b>🧬 ML Pipeline → 📁 Data Loading</b>, upload the 5 Fitbit CSV files
+            and click <b>▶ Proceed to TSFresh Features</b>.<br>
+            The dataset will then be shared automatically with this section and Insights Dashboard.
+          </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        master_shared = st.session_state.shared_master
+        detected_shared = st.session_state.shared_detected
+        n_files = len(detected_shared)
+        # Show file status grid
+        status_html = f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.6rem;margin:1rem 0">'
         for req_name, finfo in REQUIRED_FILES.items():
-            best_score, best_name, best_df = 0, None, None
-            for uname, udf in raw_uploads:
-                s = score_match(udf, finfo)
-                if s > best_score:
-                    best_score, best_name, best_df = s, uname, udf
-            if best_score >= 2:
-                detected[req_name] = best_df
+            found = req_name in detected_shared
+            bg  = "rgba(30,132,73,0.07)" if found else "rgba(211,84,0,0.07)"
+            bor = "rgba(30,132,73,0.35)" if found else "rgba(211,84,0,0.35)"
+            ico = "✅" if found else "❌"
+            status_html += f'<div style="background:{bg};border:1px solid {bor};border-radius:10px;padding:0.65rem 0.85rem"><div style="font-size:1.15rem">{ico} {finfo["icon"]}</div><div style="font-size:0.71rem;font-weight:600;color:{TXT};margin-top:0.3rem">{finfo["label"]}</div></div>'
+        status_html += "</div>"
+        st.markdown(status_html, unsafe_allow_html=True)
+        ui_success(f"Shared dataset ready — {master_shared.shape[0]:,} rows · {master_shared['Id'].nunique()} users · {n_files}/5 files")
 
-    n_up = len(detected)
-    status_html = f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.6rem;margin:1rem 0">'
-    for req_name, finfo in REQUIRED_FILES.items():
-        found = req_name in detected
-        bg  = "rgba(30,132,73,0.07)" if found else "rgba(211,84,0,0.07)"
-        bor = "rgba(30,132,73,0.35)" if found else "rgba(211,84,0,0.35)"
-        ico = "✅" if found else "❌"
-        status_html += f'<div style="background:{bg};border:1px solid {bor};border-radius:10px;padding:0.65rem 0.85rem"><div style="font-size:1.15rem">{ico} {finfo["icon"]}</div><div style="font-size:0.71rem;font-weight:600;color:{TXT};margin-top:0.3rem">{finfo["label"]}</div></div>'
-    status_html += "</div>"
-    st.markdown(status_html, unsafe_allow_html=True)
-
-    anom_metrics((n_up,"Detected"),(5-n_up,"Missing"),("✓" if n_up==5 else "✗","Ready"))
-    if n_up < 5:
-        missing_lbl = [REQUIRED_FILES[r]["label"] for r in REQUIRED_FILES if r not in detected]
-        if missing_lbl: ui_warn(f"Missing: {', '.join(missing_lbl)}")
-
-    if st.button("⚡ Load & Build Master DataFrame", disabled=(n_up < 5), key="anom_load_btn"):
-        with st.spinner("Parsing and building master..."):
-            try:
-                daily    = detected["dailyActivity_merged.csv"].copy()
-                hourly_s = detected["hourlySteps_merged.csv"].copy()
-                hourly_i = detected["hourlyIntensities_merged.csv"].copy()
-                sleep    = detected["minuteSleep_merged.csv"].copy()
-                hr_df    = detected["heartrate_seconds_merged.csv"].copy()
-                daily["ActivityDate"]    = parse_dt(daily["ActivityDate"])
-                hourly_s["ActivityHour"] = parse_dt(hourly_s["ActivityHour"])
-                hourly_i["ActivityHour"] = parse_dt(hourly_i["ActivityHour"])
-                sleep["date"]            = parse_dt(sleep["date"])
-                hr_df["Time"]            = parse_dt(hr_df["Time"])
-                hr_minute = (hr_df.set_index("Time").groupby("Id")["Value"]
-                             .resample("1min").mean().reset_index())
-                hr_minute.columns = ["Id","Time","HeartRate"]
-                hr_minute = hr_minute.dropna()
-                hr_minute["Date"] = hr_minute["Time"].dt.date
-                hr_daily = (hr_minute.groupby(["Id","Date"])["HeartRate"]
-                            .agg(["mean","max","min","std"]).reset_index()
-                            .rename(columns={"mean":"AvgHR","max":"MaxHR","min":"MinHR","std":"StdHR"}))
-                sleep["Date"] = sleep["date"].dt.date
-                sleep_daily = (sleep.groupby(["Id","Date"])
-                               .agg(TotalSleepMinutes=("value","count"),
-                                    DominantSleepStage=("value", lambda x: x.mode()[0])).reset_index())
-                master = daily.copy().rename(columns={"ActivityDate":"Date"})
-                master["Date"] = master["Date"].dt.date
-                master = master.merge(hr_daily,    on=["Id","Date"], how="left")
-                master = master.merge(sleep_daily, on=["Id","Date"], how="left")
-                master["TotalSleepMinutes"]  = master["TotalSleepMinutes"].fillna(0)
-                master["DominantSleepStage"] = master["DominantSleepStage"].fillna(0)
-                for col in ["AvgHR","MaxHR","MinHR","StdHR"]:
-                    master[col] = master.groupby("Id")[col].transform(lambda x: x.fillna(x.median()))
-                st.session_state.anom_daily       = daily
-                st.session_state.anom_hourly_s    = hourly_s
-                st.session_state.anom_hourly_i    = hourly_i
-                st.session_state.anom_sleep       = sleep
-                st.session_state.anom_hr          = hr_df
-                st.session_state.anom_hr_minute   = hr_minute
-                st.session_state.anom_master      = master
-                st.session_state.anom_files_loaded = True
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error building master: {e}")
+        # Always sync anom_master from shared master (no button or rerun needed)
+        st.session_state.anom_master       = master_shared
+        st.session_state.anom_files_loaded = True
 
     if st.session_state.anom_files_loaded:
         master = st.session_state.anom_master
@@ -1981,7 +2081,7 @@ elif st.session_state.mode == "Anomaly Detection":
                 fig_acc.update_layout(height=380,yaxis_range=[0,115],yaxis_title="Detection Accuracy (%)",showlegend=False)
                 st.plotly_chart(fig_acc,use_container_width=True,key="anom_accuracy_chart")
     else:
-        st.markdown(f'<div class="anom-card" style="text-align:center;padding:2.8rem;margin-top:1rem"><div style="font-size:2.8rem;margin-bottom:0.9rem">🚨</div><div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{TXT};margin-bottom:0.5rem">Upload Your Fitbit Files to Begin</div><div style="color:{SOFT};font-size:0.86rem">Upload all 5 CSV files above and click <b>Load &amp; Build Master DataFrame</b></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="anom-card" style="text-align:center;padding:2.8rem;margin-top:1rem"><div style="font-size:2.8rem;margin-bottom:0.9rem">🚨</div><div style="font-family:Syne,sans-serif;font-size:1.15rem;font-weight:700;color:{TXT};margin-bottom:0.5rem">No Dataset Loaded</div><div style="color:{SOFT};font-size:0.86rem">Go to <b>🧬 ML Pipeline → 📁 Data Loading</b> and upload your 5 Fitbit CSV files.<br>As soon as all 5 are detected the dataset will be shared here automatically — no button click needed.</div></div>', unsafe_allow_html=True)
 
     st.markdown(f'<div class="footer">🚨 <b>FitPulse Anomaly Detection</b> &nbsp;·&nbsp; Threshold · Residual · DBSCAN · Accuracy Simulation</div>',unsafe_allow_html=True)
 
@@ -2005,108 +2105,98 @@ else:
     ins_sl_high = st.session_state.get("ins_sl_high", 600)
     ins_sigma   = st.session_state.get("ins_sigma",   2.0)
 
-    # ── SECTION 1: FILE UPLOAD ────────────────────────────────────────────────
-    ins_sec("📂", "Data Upload & Pipeline", "Step 1")
-    ins_ui_info("Upload all 5 Fitbit CSV files. Files are auto-detected by column structure — any filename works.")
+    # ── SECTION 1: SHARED DATASET STATUS ─────────────────────────────────────
+    ins_sec("📂", "Dataset Status", "Shared from ML Pipeline")
 
-    uploaded_ins = st.file_uploader(
-        "📁 Drop all 5 Fitbit CSV files here",
-        type="csv", accept_multiple_files=True, key="ins_uploader",
-        help="Hold Ctrl (Windows) or Cmd (Mac) to select multiple files"
-    )
+    shared_ok_ins = st.session_state.shared_built and st.session_state.shared_master is not None
 
-    detected_ins = {}
-    if uploaded_ins:
-        raw_ins = []
-        for uf in uploaded_ins:
-            try:
-                raw_ins.append((uf.name, pd.read_csv(uf)))
-            except Exception:
-                pass
+    if not shared_ok_ins:
+        st.markdown(f"""
+        <div class="ins-card" style="text-align:center;padding:2.5rem;margin-top:0.5rem">
+          <div style="font-size:2.5rem;margin-bottom:0.8rem">📂</div>
+          <div style="font-family:Syne,sans-serif;font-size:1.05rem;font-weight:700;color:{TXT};margin-bottom:0.5rem">
+            No dataset loaded yet
+          </div>
+          <div style="color:{SOFT};font-size:0.85rem;line-height:1.7">
+            Please go to <b>🧬 ML Pipeline → 📁 Data Loading</b>, upload the 5 Fitbit CSV files
+            and click <b>▶ Proceed to TSFresh Features</b>.<br>
+            The dataset is shared automatically — you only need to upload once.
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.8rem;max-width:500px;margin:1.2rem auto 0;text-align:left">
+            <div class="ins-feature-box"><div class="ins-feature-title">① Go to ML Pipeline</div><div class="ins-feature-body">Select it from the sidebar dropdown</div></div>
+            <div class="ins-feature-box"><div class="ins-feature-title">② Upload 5 CSV files</div><div class="ins-feature-body">Data Loading tab in ML Pipeline</div></div>
+            <div class="ins-feature-box"><div class="ins-feature-title">③ Come back here</div><div class="ins-feature-body">Dashboard auto-loads the data</div></div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        master_shared_ins = st.session_state.shared_master
+        detected_shared_ins = st.session_state.shared_detected
+
+        # File status grid
+        status_ins = f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.6rem;margin:1rem 0">'
         for req_name, finfo in REQUIRED_FILES.items():
-            best_s, best_n, best_d = 0, None, None
-            for uname, udf in raw_ins:
-                s = score_match(udf, finfo)
-                if s > best_s:
-                    best_s, best_n, best_d = s, uname, udf
-            if best_s >= 2:
-                detected_ins[req_name] = best_d
+            found = req_name in detected_shared_ins
+            bg  = f"{INS_SUCCESS_BG}" if found else f"{INS_WARN_BG}"
+            bor = f"{INS_SUCCESS_BOR}" if found else f"{INS_WARN_BOR}"
+            ico = "✅" if found else "❌"
+            status_ins += f'<div style="background:{bg};border:1px solid {bor};border-radius:10px;padding:0.65rem 0.85rem"><div style="font-size:1.1rem">{ico} {finfo["icon"]}</div><div style="font-size:0.71rem;font-weight:600;color:{TXT};margin-top:0.25rem">{finfo["label"]}</div><div style="font-size:0.63rem;color:{SOFT};font-family:DM Mono,monospace">Shared</div></div>'
+        status_ins += "</div>"
+        st.markdown(status_ins, unsafe_allow_html=True)
 
-    n_ins_up = len(detected_ins)
-    status_ins = f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.6rem;margin:1rem 0">'
-    for req_name, finfo in REQUIRED_FILES.items():
-        found = req_name in detected_ins
-        bg  = f"{INS_SUCCESS_BG}" if found else f"{INS_WARN_BG}"
-        bor = f"{INS_SUCCESS_BOR}" if found else f"{INS_WARN_BOR}"
-        ico = "✅" if found else "❌"
-        status_ins += f'<div style="background:{bg};border:1px solid {bor};border-radius:10px;padding:0.65rem 0.85rem"><div style="font-size:1.1rem">{ico} {finfo["icon"]}</div><div style="font-size:0.71rem;font-weight:600;color:{TXT};margin-top:0.25rem">{finfo["label"]}</div><div style="font-size:0.63rem;color:{SOFT};font-family:DM Mono,monospace">{"Found ✓" if found else "Missing"}</div></div>'
-    status_ins += "</div>"
-    st.markdown(status_ins, unsafe_allow_html=True)
+        # Status badges
+        n_files_ins = len(detected_shared_ins)
+        st.markdown(f"""
+        <div style="display:flex;gap:0.6rem;margin:0.5rem 0 1rem">
+          <div style="background:{CARD};border:1px solid {BORD};border-radius:10px;padding:0.5rem 0.9rem;text-align:center;min-width:110px">
+            <div style="font-family:Syne,sans-serif;font-size:1.3rem;font-weight:800;color:{ACC}">{n_files_ins}/5</div>
+            <div style="font-size:0.65rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.07em">Files Loaded</div>
+          </div>
+          <div style="background:{CARD};border:1px solid {BORD};border-radius:10px;padding:0.5rem 0.9rem;text-align:center;min-width:110px">
+            <div style="font-family:Syne,sans-serif;font-size:1.3rem;font-weight:800;color:{ACCENT3}">✅ READY</div>
+            <div style="font-size:0.65rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.07em">Shared Dataset</div>
+          </div>
+          <div style="background:{CARD};border:1px solid {BORD};border-radius:10px;padding:0.5rem 0.9rem;text-align:center;min-width:140px">
+            <div style="font-family:Syne,sans-serif;font-size:1.3rem;font-weight:800;color:{ACC}">{master_shared_ins.shape[0]:,}</div>
+            <div style="font-size:0.65rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.07em">Total Rows</div>
+          </div>
+          <div style="background:{CARD};border:1px solid {BORD};border-radius:10px;padding:0.5rem 0.9rem;text-align:center;min-width:110px">
+            <div style="font-family:Syne,sans-serif;font-size:1.3rem;font-weight:800;color:{ACC2}">{master_shared_ins['Id'].nunique()}</div>
+            <div style="font-size:0.65rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.07em">Users</div>
+          </div>
+        </div>""", unsafe_allow_html=True)
 
-    # KPI mini row
-    st.markdown(f"""
-    <div style="display:flex;gap:0.6rem;margin:0.5rem 0">
-      <div style="background:{CARD};border:1px solid {BORD};border-radius:10px;padding:0.5rem 0.9rem;text-align:center;min-width:100px">
-        <div style="font-family:Syne,sans-serif;font-size:1.3rem;font-weight:800;color:{ACC}">{n_ins_up}/5</div>
-        <div style="font-size:0.65rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.07em">Files Ready</div>
-      </div>
-      <div style="background:{CARD};border:1px solid {BORD};border-radius:10px;padding:0.5rem 0.9rem;text-align:center;min-width:100px">
-        <div style="font-family:Syne,sans-serif;font-size:1.3rem;font-weight:800;color:{'#1E8449' if n_ins_up==5 else ACCENT_RED}">{'✅ READY' if n_ins_up==5 else '⏳ WAIT'}</div>
-        <div style="font-size:0.65rem;color:{SOFT};text-transform:uppercase;letter-spacing:0.07em">Status</div>
-      </div>
-    </div>""", unsafe_allow_html=True)
+        # ── AUTO-RUN detection when shared data is available (no button click needed) ──
+        # If shared master is ready and detection hasn't run yet (or master changed), run it now.
+        _ins_master_changed = (
+            st.session_state.ins_master is None or
+            not st.session_state.ins_pipeline_done or
+            (st.session_state.ins_master is not master_shared_ins)
+        )
+        if _ins_master_changed:
+            with st.spinner("🔄 Running anomaly detection on shared dataset…"):
+                try:
+                    st.session_state.ins_master      = master_shared_ins
+                    st.session_state.ins_anom_hr     = detect_hr_anomalies(master_shared_ins, ins_hr_high, ins_hr_low,   ins_sigma)
+                    st.session_state.ins_anom_steps  = detect_steps_anomalies(master_shared_ins, ins_st_low,  25000,     ins_sigma)
+                    st.session_state.ins_anom_sleep  = detect_sleep_anomalies(master_shared_ins, ins_sl_low,  ins_sl_high, ins_sigma)
+                    st.session_state.ins_pipeline_done = True
+                except Exception as _e:
+                    st.error(f"Detection error: {_e}")
 
-    if n_ins_up < 5:
-        missing_lbl = [REQUIRED_FILES[r]["label"] for r in REQUIRED_FILES if r not in detected_ins]
-        if missing_lbl: ui_warn(f"Missing: {', '.join(missing_lbl)}")
-
-    run_ins = st.button("⚡ Run Full Pipeline & Detect Anomalies", disabled=(n_ins_up < 5), key="ins_run_btn")
-
-    if run_ins and n_ins_up == 5:
-        with st.spinner("⏳ Loading data and detecting anomalies..."):
-            try:
-                daily    = detected_ins["dailyActivity_merged.csv"].copy()
-                hourly_s = detected_ins["hourlySteps_merged.csv"].copy()
-                hourly_i = detected_ins["hourlyIntensities_merged.csv"].copy()
-                sleep    = detected_ins["minuteSleep_merged.csv"].copy()
-                hr_df    = detected_ins["heartrate_seconds_merged.csv"].copy()
-
-                daily["ActivityDate"]    = parse_dt(daily["ActivityDate"])
-                hourly_s["ActivityHour"] = parse_dt(hourly_s["ActivityHour"])
-                hourly_i["ActivityHour"] = parse_dt(hourly_i["ActivityHour"])
-                sleep["date"]            = parse_dt(sleep["date"])
-                hr_df["Time"]            = parse_dt(hr_df["Time"])
-
-                hr_minute = (hr_df.set_index("Time").groupby("Id")["Value"]
-                             .resample("1min").mean().reset_index())
-                hr_minute.columns = ["Id","Time","HeartRate"]
-                hr_minute = hr_minute.dropna()
-                hr_minute["Date"] = hr_minute["Time"].dt.date
-                hr_daily = (hr_minute.groupby(["Id","Date"])["HeartRate"]
-                            .agg(["mean","max","min","std"]).reset_index()
-                            .rename(columns={"mean":"AvgHR","max":"MaxHR","min":"MinHR","std":"StdHR"}))
-                sleep["Date"] = sleep["date"].dt.date
-                sleep_daily = (sleep.groupby(["Id","Date"])
-                               .agg(TotalSleepMinutes=("value","count"),
-                                    DominantSleepStage=("value", lambda x: x.mode()[0])).reset_index())
-                master = daily.copy().rename(columns={"ActivityDate":"Date"})
-                master["Date"] = master["Date"].dt.date
-                master = master.merge(hr_daily,    on=["Id","Date"], how="left")
-                master = master.merge(sleep_daily, on=["Id","Date"], how="left")
-                master["TotalSleepMinutes"]  = master["TotalSleepMinutes"].fillna(0)
-                master["DominantSleepStage"] = master["DominantSleepStage"].fillna(0)
-                for col in ["AvgHR","MaxHR","MinHR","StdHR"]:
-                    master[col] = master.groupby("Id")[col].transform(lambda x: x.fillna(x.median()))
-
-                st.session_state.ins_master      = master
-                st.session_state.ins_anom_hr     = detect_hr_anomalies(master,    ins_hr_high, ins_hr_low,   ins_sigma)
-                st.session_state.ins_anom_steps  = detect_steps_anomalies(master, ins_st_low,  25000,        ins_sigma)
-                st.session_state.ins_anom_sleep  = detect_sleep_anomalies(master, ins_sl_low,  ins_sl_high,  ins_sigma)
-                st.session_state.ins_pipeline_done = True
-                st.rerun()
-            except Exception as e:
-                st.error(f"Pipeline error: {e}")
-                import traceback; st.code(traceback.format_exc())
+        # Manual re-run button (to apply changed thresholds)
+        if st.button("🔄 Re-run Detection with Current Thresholds", key="ins_run_btn"):
+            with st.spinner("Running anomaly detection..."):
+                try:
+                    master = master_shared_ins
+                    st.session_state.ins_master      = master
+                    st.session_state.ins_anom_hr     = detect_hr_anomalies(master,    ins_hr_high, ins_hr_low,   ins_sigma)
+                    st.session_state.ins_anom_steps  = detect_steps_anomalies(master, ins_st_low,  25000,        ins_sigma)
+                    st.session_state.ins_anom_sleep  = detect_sleep_anomalies(master, ins_sl_low,  ins_sl_high,  ins_sigma)
+                    st.session_state.ins_pipeline_done = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Detection error: {e}")
+                    import traceback; st.code(traceback.format_exc())
 
     # ── MAIN DASHBOARD (post-pipeline) ────────────────────────────────────────
     if not st.session_state.ins_pipeline_done:
@@ -2114,17 +2204,16 @@ else:
         <div class="ins-card" style="text-align:center;padding:3rem;margin-top:1rem">
           <div style="font-size:3rem;margin-bottom:1rem">📈</div>
           <div style="font-family:Syne,sans-serif;font-size:1.2rem;font-weight:700;color:{TXT};margin-bottom:0.5rem">
-            Upload Files &amp; Run Pipeline to Begin
+            Dataset Not Yet Loaded
           </div>
           <div style="color:{SOFT};font-size:0.88rem;margin-bottom:1.5rem">
-            1 · Upload all 5 CSV files above &nbsp;|&nbsp;
-            2 · Adjust thresholds in sidebar &nbsp;|&nbsp;
-            3 · Click <b>⚡ Run Full Pipeline</b>
+            Upload your 5 Fitbit CSV files in <b>🧬 ML Pipeline → 📁 Data Loading</b>.<br>
+            The dashboard will load automatically — no extra steps needed.
           </div>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;max-width:620px;margin:0 auto;text-align:left">
-            <div class="ins-feature-box"><div class="ins-feature-title">📤 Upload</div><div class="ins-feature-body">All 5 Fitbit CSV files auto-detected by column structure</div></div>
-            <div class="ins-feature-box"><div class="ins-feature-title">🚨 Detect</div><div class="ins-feature-body">3 detection methods: Threshold · Residual · DBSCAN</div></div>
-            <div class="ins-feature-box"><div class="ins-feature-title">📥 Export</div><div class="ins-feature-body">Download full PDF report + CSV anomaly data</div></div>
+            <div class="ins-feature-box"><div class="ins-feature-title">① Go to ML Pipeline</div><div class="ins-feature-body">Select from the sidebar dropdown</div></div>
+            <div class="ins-feature-box"><div class="ins-feature-title">② Upload 5 CSV files</div><div class="ins-feature-body">Files are auto-detected instantly</div></div>
+            <div class="ins-feature-box"><div class="ins-feature-title">③ Come back here</div><div class="ins-feature-body">Dashboard loads automatically</div></div>
           </div>
         </div>""", unsafe_allow_html=True)
     else:
